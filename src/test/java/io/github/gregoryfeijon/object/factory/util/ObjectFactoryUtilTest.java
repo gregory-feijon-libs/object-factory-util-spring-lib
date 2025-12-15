@@ -1,5 +1,7 @@
 package io.github.gregoryfeijon.object.factory.util;
 
+import io.github.gregoryfeijon.object.factory.commons.utils.factory.FactoryUtil;
+import io.github.gregoryfeijon.object.factory.util.config.TestSerializerConfiguration;
 import io.github.gregoryfeijon.object.factory.util.domain.BarWrapper;
 import io.github.gregoryfeijon.object.factory.util.domain.EmptySource;
 import io.github.gregoryfeijon.object.factory.util.domain.FooDuplicated;
@@ -21,12 +23,11 @@ import io.github.gregoryfeijon.object.factory.util.domain.WrapperArrayHolder;
 import io.github.gregoryfeijon.object.factory.util.domain.enums.StatusTestDest;
 import io.github.gregoryfeijon.object.factory.util.exception.ApiException;
 import io.github.gregoryfeijon.object.factory.util.util.TestObjectsFactory;
-import io.github.gregoryfeijon.object.factory.util.util.TestSerializerUtil;
 import io.github.gregoryfeijon.object.factory.util.utils.serialization.ObjectFactoryUtil;
 import io.github.gregoryfeijon.serializer.provider.domain.enums.SerializationType;
 import io.github.gregoryfeijon.serializer.provider.util.serialization.adapter.SerializerProvider;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
 
 import java.util.Collections;
 import java.util.EnumMap;
@@ -39,12 +40,11 @@ import java.util.function.Supplier;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+@SpringBootTest(classes = {
+        FactoryUtil.class,
+        TestSerializerConfiguration.class
+})
 class ObjectFactoryUtilTest {
-
-    @BeforeAll
-    static void setup() {
-        TestSerializerUtil.configureGsonAndJacksonAdapter();
-    }
 
     @Test
     void shouldCopyPrimitiveFieldsUsingAnnotationAndNames() {

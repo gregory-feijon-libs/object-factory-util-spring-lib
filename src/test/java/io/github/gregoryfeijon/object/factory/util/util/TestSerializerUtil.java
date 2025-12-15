@@ -13,16 +13,10 @@ import io.github.gregoryfeijon.serializer.provider.config.gson.strategy.GsonSeri
 import io.github.gregoryfeijon.serializer.provider.config.jackson.EnumCustomizationModule;
 import io.github.gregoryfeijon.serializer.provider.config.jackson.factory.EnumDeserializers;
 import io.github.gregoryfeijon.serializer.provider.config.jackson.factory.EnumSerializers;
-import io.github.gregoryfeijon.serializer.provider.domain.enums.SerializationType;
-import io.github.gregoryfeijon.serializer.provider.util.serialization.adapter.GsonAdapter;
-import io.github.gregoryfeijon.serializer.provider.util.serialization.adapter.JacksonAdapter;
-import io.github.gregoryfeijon.serializer.provider.util.serialization.adapter.SerializerAdapter;
-import io.github.gregoryfeijon.serializer.provider.util.serialization.adapter.SerializerProvider;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-import java.util.EnumMap;
 import java.util.Optional;
 
 /**
@@ -46,17 +40,6 @@ public final class TestSerializerUtil {
     }
 
     /**
-     * Configures the Gson and Jackson adapters for the SerializerProvider.
-     */
-    public static void configureGsonAndJacksonAdapter() {
-        EnumMap<SerializationType, SerializerAdapter> adapters = new EnumMap<>(SerializationType.class);
-        adapters.put(SerializationType.GSON, new GsonAdapter(gson));
-        adapters.put(SerializationType.JACKSON, new JacksonAdapter(objectMapper));
-
-        SerializerProvider.initialize(adapters, SerializationType.GSON);
-    }
-
-    /**
      * Builds an ObjectMapper with custom enum serialization module.
      * <p>
      * This method reuses the same {@link EnumCustomizationModule} that is used
@@ -65,7 +48,7 @@ public final class TestSerializerUtil {
      *
      * @return Configured ObjectMapper instance
      */
-    private static ObjectMapper buildObjectMapper() {
+    public static ObjectMapper buildObjectMapper() {
         ObjectMapper mapper = new ObjectMapper();
 
         // Register Java Time module for date/time handling
@@ -91,7 +74,7 @@ public final class TestSerializerUtil {
      *
      * @return Configured Gson instance
      */
-    private static Gson buildGsonGmt() {
+    public static Gson buildGsonGmt() {
         GsonBuilder builder = new GsonBuilder()
                 .registerTypeAdapter(Optional.class, new OptionalTypeAdapter())
                 .registerTypeAdapterFactory(new EnumUseAttributeInMarshallingTypeAdapterFactory())
