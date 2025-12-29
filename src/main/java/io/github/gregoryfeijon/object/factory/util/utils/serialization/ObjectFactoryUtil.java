@@ -18,8 +18,6 @@ import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ClassUtils;
-import org.hibernate.proxy.HibernateProxy;
-import org.hibernate.proxy.LazyInitializer;
 import org.springframework.beans.BeanInstantiationException;
 import org.springframework.beans.BeanUtils;
 import org.springframework.util.CollectionUtils;
@@ -666,8 +664,8 @@ public final class ObjectFactoryUtil {
      * @return the unproxied object, or the original if no proxy was found
      */
     private static Object unproxyValueIfNeeded(Object value) {
-        if (value instanceof HibernateProxy proxy) {
-            return unproxyHibernateProxy(proxy);
+        if (HibernateProxyChecker.isHibernateProxy(value)) {
+            return HibernateProxyChecker.unproxy(value);
         }
 
         if (value instanceof Collection<?> collection) {
@@ -679,24 +677,6 @@ public final class ObjectFactoryUtil {
         }
 
         return value;
-    }
-
-    /**
-     * Unwraps a Hibernate proxy to its underlying implementation.
-     * <p>
-     * If the proxy is uninitialized, returns a new instance of the persistent class
-     * to avoid triggering lazy loading. Otherwise, returns the initialized implementation.
-     * </p>
-     *
-     * @param proxy the Hibernate proxy to unwrap
-     * @return the underlying object or a new instance if uninitialized
-     */
-    private static Object unproxyHibernateProxy(HibernateProxy proxy) {
-        LazyInitializer li = proxy.getHibernateLazyInitializer();
-        if (li.isUninitialized()) {
-            return BeanUtils.instantiateClass(li.getPersistentClass());
-        }
-        return li.getImplementation();
     }
 
     /**
@@ -755,7 +735,7 @@ public final class ObjectFactoryUtil {
      */
     private static boolean containsProxy(Collection<?> collection) {
         return collection.stream()
-                .anyMatch(HibernateProxy.class::isInstance);
+                .anyMatch(HibernateProxyChecker::isHibernateProxy);
     }
 
     /**
@@ -766,8 +746,8 @@ public final class ObjectFactoryUtil {
      */
     private static boolean containsProxy(Map<?, ?> map) {
         return map.entrySet().stream()
-                .anyMatch(e -> e.getKey() instanceof HibernateProxy
-                        || e.getValue() instanceof HibernateProxy);
+                .anyMatch(e -> HibernateProxyChecker.isHibernateProxy(e.getKey())
+                        || HibernateProxyChecker.isHibernateProxy(e.getValue()));
     }
 
     /**
