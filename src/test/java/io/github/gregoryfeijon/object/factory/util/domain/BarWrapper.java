@@ -24,6 +24,9 @@ public class BarWrapper {
     private ObjectBar objectBar;
     private List<PrimitiveBar> primitiveBarList;
     private Map<String, ObjectBar> objectBarMap;
+    private List<List<List<PrimitiveBar>>> objectBarLists;
+    private Map<Integer, Map<Integer, Map<Integer, PrimitiveBar>>> multiMapBar;
+    private Map<Integer, List<Map<Integer, Map<Integer, PrimitiveBar>>>> multiMapAndListBar;
     private String fieldExcluded;
     private String fieldExcludedWithAnnotation;
 

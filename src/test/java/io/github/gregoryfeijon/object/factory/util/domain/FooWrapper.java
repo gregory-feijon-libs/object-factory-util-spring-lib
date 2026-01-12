@@ -32,6 +32,15 @@ public class FooWrapper {
     @FieldCopyName(value = "objectBarMap")
     private Map<String, ObjectFoo> objectFooMap;
 
+    @FieldCopyName(value = "objectBarLists")
+    private List<List<List<PrimitiveFoo>>> objectFooLists;
+
+    @FieldCopyName(value = "multiMapBar")
+    private Map<Integer, Map<Integer, Map<Integer, PrimitiveFoo>>> multiMapFoo;
+
+    @FieldCopyName(value = "multiMapAndListBar")
+    private Map<Integer, List<Map<Integer, Map<Integer, PrimitiveFoo>>>> multiMapAndListFoo;
+
     private String fieldExcluded;
 
     @ObjectCopyExclude
