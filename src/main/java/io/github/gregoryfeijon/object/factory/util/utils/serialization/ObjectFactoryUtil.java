@@ -871,6 +871,10 @@ public final class ObjectFactoryUtil {
                 .orElse(null);
     }
 
+    // ============================================================================
+// MAIN COPY METHODS
+// ============================================================================
+
     /**
      * Determines the appropriate copying strategy based on the field types and copies the value.
      * <p>
@@ -891,6 +895,7 @@ public final class ObjectFactoryUtil {
     private static Object copyValue(Field sourceField, Field destField, Object sourceValue) {
         Class<?> sourceFieldType = sourceField.getType();
         Class<?> destFieldType = destField.getType();
+
         if (isPrimitiveOrEnum(sourceFieldType)) {
             return sourceValue;
         }
@@ -919,126 +924,500 @@ public final class ObjectFactoryUtil {
      * @return a deep copy of the source value, or null if the source value is null
      */
     private static Object serializingClone(Object sourceValue, Class<?> clazz) {
-        if (sourceValue != null) {
-            return serializingCloneObjects(sourceValue, clazz);
-        }
-        return null;
+        return sourceValue != null ? serializingCloneObjects(sourceValue, clazz) : null;
     }
 
     /**
      * Creates a deep copy of an object via serialization.
      * <p>
-     * This method uses different serialization strategies based on whether the target
-     * type is a simple type (uses Java serialization) or a complex type (uses JSON serialization).
+     * This method uses different serialization strategies based on the relationship
+     * between the source value's type and the target class:
      * </p>
+     * <ul>
+     *   <li><b>Target is simple type:</b> Uses Java binary serialization</li>
+     *   <li><b>Source is wrapper type:</b> Uses Java binary serialization to create new reference</li>
+     *   <li><b>Same type (deep clone):</b> Uses JSON serialization</li>
+     *   <li><b>Different types (conversion):</b> Uses recursive {@link #createFromObject}</li>
+     * </ul>
      *
      * @param sourceValue the value to clone
      * @param clazz       the target class type
      * @return a deep copy of the source value
      */
     private static Object serializingCloneObjects(Object sourceValue, Class<?> clazz) {
-        Object clone;
-        byte[] byteClone;
-        if (ReflectionTypeUtil.isSimpleType(clazz)) {
-            byteClone = SerializationUtils.serialize(sourceValue);
-            clone = SerializationUtil.deserialize(byteClone);
-        } else {
-            byteClone = SerializationUtil.serializeJsonObjectAsByte(sourceValue);
-            clone = SERIALIZER.deserialize(SerializationUtil.getDeserializedObjectAsString(byteClone), clazz);
+        if (sourceValue == null) {
+            return null;
         }
-        return clone;
+        Class<?> sourceClass = sourceValue.getClass();
+
+        if (ReflectionTypeUtil.isSimpleType(clazz)) {
+            return cloneToBinaryFormat(sourceValue);
+        }
+
+        if (ReflectionTypeUtil.isWrapperType(sourceClass)) {
+            return cloneToBinaryFormat(sourceValue);
+        }
+
+        if (sourceClass == clazz) {
+            return cloneToJsonFormat(sourceValue, clazz);
+        }
+
+        return createFromObject(sourceValue, clazz);
+    }
+
+    /**
+     * Clones an object using Java binary serialization.
+     * <p>
+     * Creates a new reference in memory by serializing to byte array and deserializing back.
+     * Used for simple types, wrappers, and primitives.
+     * </p>
+     *
+     * @param sourceValue the value to clone
+     * @return a deep copy of the source value
+     */
+    private static Object cloneToBinaryFormat(Object sourceValue) {
+        byte[] byteClone = SerializationUtils.serialize(sourceValue);
+        return SerializationUtil.deserialize(byteClone);
+    }
+
+    /**
+     * Clones an object using JSON serialization.
+     * <p>
+     * Creates a deep copy by converting to JSON and back. Used when source and
+     * destination types are the same, ensuring all nested references are new.
+     * </p>
+     *
+     * @param sourceValue the value to clone
+     * @param clazz       the target class type
+     * @return a deep copy of the source value
+     */
+    private static Object cloneToJsonFormat(Object sourceValue, Class<?> clazz) {
+        String jsonClone = SERIALIZER.serialize(sourceValue);
+        return SERIALIZER.deserialize(jsonClone, clazz);
     }
 
     /**
      * Creates a deep copy of a collection or map via serialization, preserving generic type information.
      * <p>
-     * This method handles the complexity of copying generic collections and maps by preserving
-     * their type parameters during serialization and deserialization.
+     * This method handles the complexity of copying generic collections and maps by:
      * </p>
+     * <ul>
+     *   <li>Preserving type parameters during serialization and deserialization</li>
+     *   <li>Detecting when source and destination element types differ</li>
+     *   <li>Using efficient JSON serialization for same-type deep cloning</li>
+     *   <li>Converting elements individually when types differ to respect {@link FieldCopyName} mappings</li>
+     *   <li>Respecting field exclusion annotations on nested elements</li>
+     * </ul>
      *
      * @param sourceValue the collection or map to clone
      * @param genericType the generic type information of the target field
      * @return a deep copy of the source value, or null if the source value is null
      */
     private static Object serializingCloneCollectionMap(Object sourceValue, Type genericType) {
-        Object clone = null;
-        if (sourceValue != null) {
-            try {
-                byte[] byteClone = SerializationUtil.serializeJsonObjectAsByte(sourceValue);
-                if (isCollection(sourceValue.getClass())) {
-                    clone = verifyList(sourceValue, genericType, byteClone);
-                } else {
-                    clone = SERIALIZER.deserialize(SerializationUtil.getDeserializedObjectAsString(byteClone), genericType);
-                }
-            } catch (ClassNotFoundException ex) {
-                throw new ApiException("Error deserializing collection during object copy.", ex);
-            }
+        if (sourceValue == null) {
+            return null;
         }
-        return clone;
+        try {
+            if (isCollection(sourceValue.getClass())) {
+                return cloneCollection((Collection<?>) sourceValue, genericType);
+            } else {
+                return cloneMap((Map<?, ?>) sourceValue, genericType);
+            }
+        } catch (Exception ex) {
+            throw new ApiException("Error cloning collection/map during object copy.", ex);
+        }
     }
 
     /**
-     * Verifies and deserializes a list, handling complex generic type scenarios.
+     * Clones a collection, handling element type conversion when needed.
+     * <p>
+     * Delegates to specialized handlers based on collection structure and element types.
+     * </p>
+     *
+     * @param sourceCollection the collection to clone
+     * @param genericType      the target generic type
+     * @return a new collection with cloned/converted elements
+     * @throws ClassNotFoundException     if type resolution fails
+     * @throws BeanInstantiationException if type instantiation fails
+     */
+    @SuppressWarnings("unchecked")
+    private static Object cloneCollection(Collection<?> sourceCollection, Type genericType)
+            throws ClassNotFoundException, BeanInstantiationException {
+        if (sourceCollection.isEmpty()) {
+            return deserializeEmptyCollection(genericType);
+        }
+
+        Object firstElement = sourceCollection.iterator().next();
+        Class<?> sourceElementType = firstElement.getClass();
+        Class<?> targetElementType = extractCollectionElementType(genericType);
+
+        if (isClassMapCollection(sourceElementType)) {
+            return cloneNestedCollection(sourceCollection, genericType, firstElement, targetElementType);
+        }
+
+        return cloneSimpleCollection(sourceCollection, genericType, sourceElementType, targetElementType);
+    }
+
+    /**
+     * Clones a map, handling value type conversion when needed.
+     * <p>
+     * Delegates to specialized handlers based on map structure and value types.
+     * </p>
+     *
+     * @param sourceMap   the map to clone
+     * @param genericType the target generic type
+     * @return a new map with cloned/converted values
+     * @throws ClassNotFoundException     if type resolution fails
+     * @throws BeanInstantiationException if type instantiation fails
+     */
+    @SuppressWarnings("unchecked")
+    private static Object cloneMap(Map<?, ?> sourceMap, Type genericType)
+            throws ClassNotFoundException, BeanInstantiationException {
+        if (sourceMap.isEmpty()) {
+            return deserializeEmptyMap(genericType);
+        }
+
+        Object firstValue = sourceMap.values().iterator().next();
+        Class<?> sourceValueType = firstValue.getClass();
+        Class<?> targetValueType = extractMapValueType(genericType);
+
+        if (isClassMapCollection(sourceValueType)) {
+            return cloneNestedMap(sourceMap, genericType, firstValue, targetValueType);
+        }
+
+        return cloneSimpleMap(sourceMap, genericType, sourceValueType, targetValueType);
+    }
+
+    /**
+     * Deserializes an empty collection to the target generic type.
+     */
+    private static Object deserializeEmptyCollection(Type genericType) {
+        String jsonClone = SERIALIZER.serialize(Collections.emptyList());
+        return SERIALIZER.deserialize(jsonClone, genericType);
+    }
+
+    /**
+     * Clones a nested collection structure (e.g., List&lt;List&lt;...&gt;&gt;).
+     * <p>
+     * Determines if the innermost element types match to decide between
+     * JSON serialization (same type) or recursive conversion (different types).
+     * </p>
+     */
+    private static Object cloneNestedCollection(Collection<?> sourceCollection,
+                                                Type genericType,
+                                                Object firstElement,
+                                                Class<?> targetElementType) throws ClassNotFoundException {
+        Class<?> innermostSourceType = getInnermostElementType(firstElement);
+
+        if (innermostSourceType == targetElementType) {
+            String jsonClone = SERIALIZER.serialize(sourceCollection);
+            return verifyList(sourceCollection, genericType, jsonClone);
+        }
+
+        return convertNestedCollectionElements(sourceCollection, genericType);
+    }
+
+    /**
+     * Converts each element of a nested collection recursively.
+     */
+    private static List<Object> convertNestedCollectionElements(Collection<?> sourceCollection,
+                                                                Type genericType) {
+        Type nestedType = getNestedGenericType(genericType, 0);
+        List<Object> convertedList = new ArrayList<>();
+
+        for (Object item : sourceCollection) {
+            Object converted = serializingCloneCollectionMap(item, nestedType);
+            convertedList.add(converted);
+        }
+
+        return convertedList;
+    }
+
+    /**
+     * Clones a collection with simple (non-nested) elements.
+     */
+    private static Object cloneSimpleCollection(Collection<?> sourceCollection,
+                                                Type genericType,
+                                                Class<?> sourceElementType,
+                                                Class<?> targetElementType)
+            throws ClassNotFoundException {
+        if (sourceElementType == targetElementType) {
+            String jsonClone = SERIALIZER.serialize(sourceCollection);
+            return verifyList(sourceCollection, genericType, jsonClone);
+        }
+
+        return convertCollectionElements(sourceCollection, targetElementType);
+    }
+
+    /**
+     * Converts each element of a collection to the target type.
+     */
+    private static List<Object> convertCollectionElements(Collection<?> sourceCollection,
+                                                          Class<?> targetElementType) {
+        List<Object> convertedList = new ArrayList<>();
+
+        for (Object item : sourceCollection) {
+            Object converted = createFromObject(item, targetElementType);
+            convertedList.add(converted);
+        }
+
+        return convertedList;
+    }
+
+    /**
+     * Verifies and deserializes a list, handling complex generic type scenarios and nested collections.
      * <p>
      * This method first attempts to deserialize using the provided generic type information.
-     * If that fails (typically due to complex generic types), it inspects the actual runtime
-     * type of the collection elements and uses that information for deserialization.
+     * If that fails (typically due to complex nested types like List&lt;List&lt;String&gt;&gt;),
+     * it inspects the actual runtime type of the collection elements and uses that information
+     * for deserialization. This enables proper handling of deeply nested collection structures.
      * </p>
      *
      * @param sourceValue the collection to deserialize
      * @param genericType the generic type information
-     * @param byteClone   the serialized bytes of the collection
+     * @param jsonClone   the JSON string representation of the collection
      * @return the deserialized collection
      * @throws ClassNotFoundException if a class required for deserialization cannot be found
      */
     @SuppressWarnings("unchecked")
-    private static Object verifyList(Object sourceValue, Type genericType, byte[] byteClone) throws ClassNotFoundException {
-        Object clone = null;
+    private static Object verifyList(Object sourceValue, Type genericType, String jsonClone)
+            throws ClassNotFoundException {
+
         try {
             verifyType(genericType);
-            clone = desserializeCollection(byteClone, genericType);
+            return SERIALIZER.deserialize(jsonClone, genericType);
         } catch (BeanInstantiationException | ClassNotFoundException ex) {
             List<Object> aux = new ArrayList<>(Collections.checkedCollection((Collection<Object>) sourceValue, Object.class));
             if (!CollectionUtils.isEmpty(aux)) {
                 Class<?> objectType = aux.getFirst().getClass();
-                clone = desserializeCollection(byteClone, GsonTypesUtil.getType(getRawType(genericType), objectType));
+                Type fallbackType = GsonTypesUtil.getType(getRawType(genericType), objectType);
+                return SERIALIZER.deserialize(jsonClone, fallbackType);
             }
+            return null;
         }
-        return clone;
     }
 
     /**
-     * Verifies that the generic type parameters of a collection are instantiable.
+     * Deserializes an empty map to the target generic type.
+     */
+    private static Object deserializeEmptyMap(Type genericType) {
+        String jsonClone = SERIALIZER.serialize(Collections.emptyMap());
+        return SERIALIZER.deserialize(jsonClone, genericType);
+    }
+
+    /**
+     * Clones a nested map structure (e.g., Map&lt;K, Map&lt;...&gt;&gt;).
+     * <p>
+     * Determines if the innermost element types match to decide between
+     * JSON serialization (same type) or recursive conversion (different types).
+     * </p>
+     */
+    private static Object cloneNestedMap(Map<?, ?> sourceMap,
+                                         Type genericType,
+                                         Object firstValue,
+                                         Class<?> targetValueType) {
+        Class<?> innermostSourceType = getInnermostElementType(firstValue);
+
+        if (innermostSourceType == targetValueType) {
+            String jsonClone = SERIALIZER.serialize(sourceMap);
+            return SERIALIZER.deserialize(jsonClone, genericType);
+        }
+
+        return convertNestedMapValues(sourceMap, genericType);
+    }
+
+    /**
+     * Converts each value of a nested map recursively.
+     */
+    private static Map<Object, Object> convertNestedMapValues(Map<?, ?> sourceMap, Type genericType) {
+        Type nestedType = getNestedGenericType(genericType, 1);
+        Map<Object, Object> convertedMap = new HashMap<>();
+
+        for (Map.Entry<?, ?> entry : sourceMap.entrySet()) {
+            Object converted = serializingCloneCollectionMap(entry.getValue(), nestedType);
+            convertedMap.put(entry.getKey(), converted);
+        }
+
+        return convertedMap;
+    }
+
+    /**
+     * Clones a map with simple (non-nested) values.
+     */
+    private static Object cloneSimpleMap(Map<?, ?> sourceMap,
+                                         Type genericType,
+                                         Class<?> sourceValueType,
+                                         Class<?> targetValueType) {
+        if (sourceValueType == targetValueType) {
+            String jsonClone = SERIALIZER.serialize(sourceMap);
+            return SERIALIZER.deserialize(jsonClone, genericType);
+        }
+
+        return convertMapValues(sourceMap, targetValueType);
+    }
+
+    /**
+     * Converts each value of a map to the target type.
+     */
+    private static Map<Object, Object> convertMapValues(Map<?, ?> sourceMap, Class<?> targetValueType) {
+        Map<Object, Object> convertedMap = new HashMap<>();
+
+        for (Map.Entry<?, ?> entry : sourceMap.entrySet()) {
+            Object convertedValue = createFromObject(entry.getValue(), targetValueType);
+            convertedMap.put(entry.getKey(), convertedValue);
+        }
+
+        return convertedMap;
+    }
+
+    /**
+     * Verifies that the generic type parameters of a parameterized type are instantiable
+     * and returns them as an array of Class objects.
      * <p>
      * This method checks each type parameter to ensure it can be instantiated.
      * Primitives, enums, and wrapper types are considered valid. For other types,
      * an attempt is made to instantiate them to verify they are concrete classes
      * with accessible constructors.
      * </p>
+     * <p>
+     * For nested generic types (e.g., {@code List<List<String>>}), this method extracts
+     * the innermost element type by recursively unwrapping {@link ParameterizedType} instances.
+     * </p>
+     *
+     * @param genericType the parameterized type to verify
+     * @return an array of {@link Class} objects representing the type parameters
+     * @throws ClassNotFoundException     if a type parameter class cannot be found
+     * @throws BeanInstantiationException if a type parameter cannot be instantiated
+     */
+    private static Class<?>[] verifyAndExtractTypes(Type genericType)
+            throws ClassNotFoundException, BeanInstantiationException {
+        ParameterizedType paramType = (ParameterizedType) genericType;
+        Type[] typeArgs = paramType.getActualTypeArguments();
+        Class<?>[] classes = new Class<?>[typeArgs.length];
+
+        for (int i = 0; i < typeArgs.length; i++) {
+            Class<?> clazz = extractElementClass(typeArgs[i]);
+            if (!isPrimitiveOrEnum(clazz) && !isWrapperType(clazz)) {
+                BeanUtils.instantiateClass(clazz);
+            }
+            classes[i] = clazz;
+        }
+
+        return classes;
+    }
+
+    /**
+     * Verifies that the generic type parameters of a collection are instantiable.
+     * <p>
+     * Note: This method delegates to {@link #verifyAndExtractTypes(Type)} for
+     * consistency and code reuse. The extracted types are validated but not returned.
+     * </p>
      *
      * @param genericType the generic type to verify
      * @throws ClassNotFoundException     if a type cannot be found
      * @throws BeanInstantiationException if a type cannot be instantiated
      */
-    private static void verifyType(Type genericType) throws ClassNotFoundException, BeanInstantiationException {
-        ParameterizedType typeTest = (ParameterizedType) genericType;
-        for (Type type : typeTest.getActualTypeArguments()) {
-            Class<?> clazz = ClassUtils.getClass(type.getTypeName());
-            if (!isPrimitiveOrEnum(clazz) && !isWrapperType(clazz)) {
-                BeanUtils.instantiateClass(clazz);
-            }
-        }
+    private static void verifyType(Type genericType)
+            throws ClassNotFoundException, BeanInstantiationException {
+        verifyAndExtractTypes(genericType);
     }
 
     /**
-     * Deserializes a collection from its byte representation using the provided generic type information.
+     * Extracts the innermost element class from a type, handling nested generic types.
+     * <p>
+     * This method recursively unwraps {@link ParameterizedType} instances to find the
+     * actual element class. For example:
+     * </p>
+     * <ul>
+     *   <li>{@code String} → {@code String.class}</li>
+     *   <li>{@code List<String>} → {@code String.class}</li>
+     *   <li>{@code List<List<String>>} → {@code String.class}</li>
+     *   <li>{@code List<List<List<PrimitiveBar>>>} → {@code PrimitiveBar.class}</li>
+     * </ul>
      *
-     * @param byteClone   the serialized bytes of the collection
-     * @param genericType the generic type information for deserialization
-     * @return the deserialized collection
+     * @param type the type to extract from
+     * @return the innermost element class
+     * @throws ClassNotFoundException if the class cannot be found
      */
-    private static Object desserializeCollection(byte[] byteClone, Type genericType) {
-        return SERIALIZER.deserialize(SerializationUtil.getDeserializedObjectAsString(byteClone), genericType);
+    private static Class<?> extractElementClass(Type type) throws ClassNotFoundException {
+        if (type instanceof Class<?> clazz) {
+            return clazz;
+        }
+        if (type instanceof ParameterizedType paramType) {
+            Type[] typeArgs = paramType.getActualTypeArguments();
+            if (typeArgs.length > 0) {
+                return extractElementClass(typeArgs[0]);
+            }
+            return ClassUtils.getClass(paramType.getRawType().getTypeName());
+        }
+        return ClassUtils.getClass(type.getTypeName());
+    }
+
+    /**
+     * Extracts the element type from a collection generic type.
+     * <p>
+     * For {@code List<T>}, returns {@code T.class}.
+     * </p>
+     */
+    private static Class<?> extractCollectionElementType(Type genericType)
+            throws ClassNotFoundException, BeanInstantiationException {
+        Class<?>[] types = verifyAndExtractTypes(genericType);
+        return types[0];
+    }
+
+    /**
+     * Extracts the value type from a map generic type.
+     * <p>
+     * For {@code Map<K, V>}, returns {@code V.class}.
+     * </p>
+     */
+    private static Class<?> extractMapValueType(Type genericType)
+            throws ClassNotFoundException, BeanInstantiationException {
+        Class<?>[] types = verifyAndExtractTypes(genericType);
+        return types[1];
+    }
+
+    /**
+     * Obtém o tipo do elemento mais interno de uma estrutura aninhada.
+     * <p>
+     * Para estruturas como List&lt;List&lt;List&lt;PrimitiveFoo&gt;&gt;&gt;, retorna PrimitiveFoo.class.
+     * </p>
+     *
+     * @param element o elemento a ser inspecionado
+     * @return a classe do elemento mais interno
+     */
+    private static Class<?> getInnermostElementType(Object element) {
+        return switch (element) {
+            case null -> Object.class;
+            case Collection<?> collection -> collection.isEmpty()
+                    ? Object.class
+                    : getInnermostElementType(collection.iterator().next());
+            case Map<?, ?> map -> map.isEmpty()
+                    ? Object.class
+                    : getInnermostElementType(map.values().iterator().next());
+            default -> element.getClass();
+        };
+    }
+
+    /**
+     * Extrai o tipo genérico aninhado de um tipo parametrizado no índice especificado.
+     * <p>
+     * Para List&lt;T&gt;, índice 0 retorna T.<br>
+     * Para Map&lt;K, V&gt;, índice 0 retorna K e índice 1 retorna V.
+     * </p>
+     *
+     * @param genericType o tipo genérico original
+     * @param index       o índice do argumento de tipo (0 para primeiro, 1 para segundo, etc)
+     * @return o tipo genérico no índice especificado
+     */
+    private static Type getNestedGenericType(Type genericType, int index) {
+        if (genericType instanceof ParameterizedType paramType) {
+            Type[] typeArgs = paramType.getActualTypeArguments();
+            if (typeArgs.length > index) {
+                return typeArgs[index];
+            }
+        }
+        return Object.class;
     }
 
     /**
