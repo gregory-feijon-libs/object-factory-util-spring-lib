@@ -60,7 +60,7 @@
         <sonar.organization>gregory-feijon-libs</sonar.organization>
         <sonar.projectKey>gregory-feijon-libs_object-factory-util-spring-lib</sonar.projectKey>
         <lombok.version>1.18.42</lombok.version>
-        <spring.starter.version>3.5.9</spring.starter.version>
+        <spring.starter.version>4.0.2</spring.starter.version>
     </properties>
 
     <profiles>
