@@ -10,6 +10,7 @@ import io.github.gregoryfeijon.object.factory.util.domain.annotation.ObjectCopyE
 import io.github.gregoryfeijon.object.factory.util.domain.annotation.ObjectCopyExclusions;
 import io.github.gregoryfeijon.object.factory.util.domain.model.ClassPairKey;
 import io.github.gregoryfeijon.object.factory.util.exception.ApiException;
+import io.github.gregoryfeijon.object.factory.util.exception.ErrorMessages;
 import io.github.gregoryfeijon.serializer.provider.util.gson.GsonTypesUtil;
 import io.github.gregoryfeijon.serializer.provider.util.serialization.SerializationUtil;
 import io.github.gregoryfeijon.serializer.provider.util.serialization.adapter.SerializerAdapter;
@@ -90,6 +91,15 @@ public final class ObjectFactoryUtil {
 
     private static final SerializerAdapter SERIALIZER;
     private static final Predicate<Field> PREDICATE_MODIFIERS;
+
+    /**
+     * Minimum number of fields required to use parallel stream processing.
+     * <p>
+     * For objects with fewer fields than this threshold, sequential processing
+     * is used to avoid the overhead of the ForkJoinPool.
+     * </p>
+     */
+    private static final int PARALLEL_STREAM_THRESHOLD = 10;
 
     /**
      * Cache storing field mappings for each class, keyed by normalized field name.
@@ -206,7 +216,7 @@ public final class ObjectFactoryUtil {
     private static <T, U> void verifyCollectionAndSupplier(Collection<T> entitiesToCopy, Supplier<U> supplier) {
         verifyCollection(entitiesToCopy);
         if (supplier == null) {
-            throw new ApiException("The specified collection type for return is null.");
+            throw new ApiException(ErrorMessages.SUPPLIER_NULL);
         }
     }
 
@@ -219,7 +229,7 @@ public final class ObjectFactoryUtil {
      */
     private static <T> void verifyCollection(Collection<T> entitiesToCopy) {
         if (CollectionUtils.isEmpty(entitiesToCopy)) {
-            throw new ApiException("The collection to be copied has no elements.");
+            throw new ApiException(ErrorMessages.COLLECTION_EMPTY);
         }
     }
 
@@ -310,7 +320,12 @@ public final class ObjectFactoryUtil {
     public static <T, S> void createFromObject(S source, T dest) {
         verifySourceAndDestObjects(source, dest);
         var sourceDestFieldsMap = createSourceDestFieldMaps(source, dest);
-        sourceDestFieldsMap.entrySet().parallelStream().forEach(fieldsEntry -> {
+
+        Stream<Map.Entry<Field, Field>> stream = sourceDestFieldsMap.size() >= PARALLEL_STREAM_THRESHOLD
+                ? sourceDestFieldsMap.entrySet().parallelStream()
+                : sourceDestFieldsMap.entrySet().stream();
+
+        stream.forEach(fieldsEntry -> {
             Object sourceValue = verifyValue(fieldsEntry.getKey(), fieldsEntry.getValue(), source);
             FieldUtil.setProtectedFieldValue(fieldsEntry.getValue(), dest, sourceValue);
         });
@@ -414,7 +429,7 @@ public final class ObjectFactoryUtil {
     private static <T, S> void verifySourceAndDestObjects(S source, T dest) {
         verifySourceObject(source);
         if (dest == null) {
-            throw new ApiException("The destination object is null.");
+            throw new ApiException(ErrorMessages.DESTINATION_OBJECT_NULL);
         }
     }
 
@@ -427,7 +442,7 @@ public final class ObjectFactoryUtil {
      */
     private static <S> void verifySourceObject(S source) {
         if (source == null) {
-            throw new ApiException("The object to be copied is null.");
+            throw new ApiException(ErrorMessages.SOURCE_OBJECT_NULL);
         }
     }
 
@@ -871,10 +886,6 @@ public final class ObjectFactoryUtil {
                 .orElse(null);
     }
 
-    // ============================================================================
-// MAIN COPY METHODS
-// ============================================================================
-
     /**
      * Determines the appropriate copying strategy based on the field types and copies the value.
      * <p>
@@ -1024,7 +1035,7 @@ public final class ObjectFactoryUtil {
                 return cloneMap((Map<?, ?>) sourceValue, genericType);
             }
         } catch (Exception ex) {
-            throw new ApiException("Error cloning collection/map during object copy.", ex);
+            throw new ApiException(ErrorMessages.CLONE_COLLECTION_MAP_ERROR, ex);
         }
     }
 

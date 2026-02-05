@@ -40,7 +40,7 @@ jobs:
       - name: Build, Test and Analyze (SonarCloud)
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: mvn -B clean verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.login=$SONAR_TOKEN
+        run: mvn -B clean verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.token=$SONAR_TOKEN
 
       - name: Instalar Semgrep
         run: pip install semgrep

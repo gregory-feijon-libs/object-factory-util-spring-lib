@@ -32,3 +32,8 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### IA ###
+.claude
+nul
+NUL
