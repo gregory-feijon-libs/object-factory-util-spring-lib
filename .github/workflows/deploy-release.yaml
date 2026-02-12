@@ -5,19 +5,124 @@ on:
   push:
     branches:
       - 'release/**'
+      - 'hotfix/**'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Build e Deploy para Maven Central
+  validate:
+    name: Validate Release
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Validate branch origin
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          if [[ ! "$BRANCH" =~ ^(release|hotfix)/ ]]; then
+            echo "::error::Pipeline only accepts release/* or hotfix/* branches. Got: $BRANCH"
+            exit 1
+          fi
+
+      - name: Checkout repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from branch name
+        id: version
+        run: |
+          BRANCH_NAME="${GITHUB_REF_NAME}"
+          VERSION="${BRANCH_NAME#release/}"
+          VERSION="${VERSION#hotfix/}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+            echo "::error::Invalid version format: $VERSION"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5.2.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Validate POM version matches branch
+        run: |
+          POM_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          BRANCH_VERSION="${{ steps.version.outputs.VERSION }}"
+          if [[ "$POM_VERSION" != "$BRANCH_VERSION" ]]; then
+            echo "::error::Version mismatch! POM: $POM_VERSION | Branch: $BRANCH_VERSION"
+            exit 1
+          fi
+          echo "Version validated: $POM_VERSION"
+
+      - name: Run Tests
+        run: mvn -B clean verify
+
+      - name: Cache Sonar packages
+        if: contains(github.ref_name, 'hotfix/')
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306  # v5.0.3
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Build, Test and Analyze (SonarCloud)
+        if: contains(github.ref_name, 'hotfix/')
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: mvn -B verify sonar:sonar -Dsonar.token=$SONAR_TOKEN
+
+      - name: Install and Run Semgrep
+        if: contains(github.ref_name, 'hotfix/')
+        run: |
+          pip install semgrep
+          semgrep --config .semgrep.yaml
+
+      - name: Run OWASP Dependency-Check
+        if: contains(github.ref_name, 'hotfix/')
+        run: >-
+          mvn -B org.owasp:dependency-check-maven:check
+          -DnvdApiKey=$NVD_API_KEY
+          -DfailBuildOnCVSS=7
+          -Dformats=HTML
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+
+      - name: Upload OWASP Report
+        if: always() && contains(github.ref_name, 'hotfix/')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: owasp-dependency-check-report
+          path: target/dependency-check-report.html
+
+  deploy:
+    name: Deploy to Maven Central
+    runs-on: ubuntu-latest
+    needs: validate
+    timeout-minutes: 15
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Extract version from branch name
+        id: version
+        run: |
+          BRANCH_NAME="${GITHUB_REF_NAME}"
+          VERSION="${BRANCH_NAME#release/}"
+          VERSION="${VERSION#hotfix/}"
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Import GPG key
         run: |
-          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
           mkdir -p ~/.gnupg
           echo "use-agent" >> ~/.gnupg/gpg.conf
           echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
@@ -27,32 +132,78 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
 
-      - name: Setup JDK 21 com cache Maven
-        uses: actions/setup-java@v4
+      - name: Setup JDK 21
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5.2.0
         with:
           distribution: 'temurin'
           java-version: '21'
           cache: 'maven'
-          cache-dependency-path: '**/pom.xml'
-          server-id: ossrh
-          server-username: ${{ secrets.OSSRH_USERNAME }}
-          server-password: ${{ secrets.OSSRH_PASSWORD }}
 
-      - name: Build e Deploy para Maven Central
-        run: mvn clean deploy -P release --settings .github/maven-settings.xml --batch-mode
+      - name: Deploy to Maven Central
+        run: mvn clean deploy -P release --settings .github/maven-settings.xml --batch-mode -DskipTests
         env:
           MAVEN_GPG_KEYNAME: ${{ secrets.GPG_KEYNAME }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           SONATYPE_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           SONATYPE_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
 
-      - name: Merge automático para main
-        if: success()
-        uses: devmasx/merge-branch@v1.4.0
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2.5.0
         with:
-          type: now
-          from_branch: ${{ github.ref_name }}
-          target_branch: main
-          github_token: ${{ secrets.BYPASS_TOKEN }}
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          name: Release ${{ steps.version.outputs.VERSION }}
+          generate_release_notes: true
         env:
-          GITHUB_TOKEN: ${{ secrets.BYPASS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  merge-and-cleanup:
+    name: Merge to Main/Develop and Cleanup
+    runs-on: ubuntu-latest
+    needs: deploy
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.BYPASS_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge to main
+        run: |
+          git fetch origin main
+          git checkout main
+          git merge --no-ff ${{ github.ref_name }} -m "Merge ${{ github.ref_name }} into main"
+          git push origin main
+
+      - name: Merge to develop
+        run: |
+          git fetch origin develop
+          git checkout develop
+          git merge --no-ff main -m "Merge main back into develop after ${{ github.ref_name }}"
+          git push origin develop
+
+      - name: Delete previous release/hotfix branches (keep current)
+        run: |
+          CURRENT_BRANCH="${{ github.ref_name }}"
+          # Determine branch type prefix
+          if [[ "$CURRENT_BRANCH" == hotfix/* ]]; then
+            PATTERN="hotfix/*"
+          else
+            PATTERN="release/*"
+          fi
+          git fetch origin "refs/heads/${PATTERN}:refs/remotes/origin/${PATTERN}" || true
+          for branch in $(git branch -r --list "origin/${PATTERN}" | sed 's|^ *origin/||'); do
+            if [[ "$branch" != "$CURRENT_BRANCH" ]]; then
+              echo "Deleting old branch: $branch"
+              git push origin --delete "$branch" || true
+            fi
+          done
+          echo "Kept current branch: $CURRENT_BRANCH"
