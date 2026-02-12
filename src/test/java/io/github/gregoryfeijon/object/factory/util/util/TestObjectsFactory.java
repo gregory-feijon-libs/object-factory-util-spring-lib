@@ -9,9 +9,9 @@ import io.github.gregoryfeijon.object.factory.util.domain.ObjectFoo;
 import io.github.gregoryfeijon.object.factory.util.domain.PrimitiveArrayHolder;
 import io.github.gregoryfeijon.object.factory.util.domain.PrimitiveBar;
 import io.github.gregoryfeijon.object.factory.util.domain.PrimitiveFoo;
-import io.github.gregoryfeijon.object.factory.util.domain.enums.StatusTestSource;
 import io.github.gregoryfeijon.object.factory.util.domain.VerifyValueSource;
 import io.github.gregoryfeijon.object.factory.util.domain.WrapperArrayHolder;
+import io.github.gregoryfeijon.object.factory.util.domain.enums.StatusTestSource;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 

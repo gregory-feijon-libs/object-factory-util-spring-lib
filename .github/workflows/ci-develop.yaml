@@ -1,9 +1,17 @@
+---
 name: CI - Develop Pipeline
 
 on:
   push:
     branches:
       - develop
+  pull_request:
+    branches:
+      - develop
+
+concurrency:
+  group: ci-develop-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-test-analyze:
@@ -12,26 +20,26 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Setup JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5.2.0
         with:
           java-version: '21'
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Cache do Maven
-        uses: actions/cache@v4
+      - name: Cache Maven packages
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306  # v5.0.3
         with:
           path: ~/.m2
           key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
           restore-keys: ${{ runner.os }}-m2
 
       - name: Cache Sonar packages
-        uses: actions/cache@v4
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306  # v5.0.3
         with:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
@@ -40,26 +48,26 @@ jobs:
       - name: Build, Test and Analyze (SonarCloud)
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: mvn -B clean verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.login=$SONAR_TOKEN
+        run: mvn -B clean verify sonar:sonar -Dsonar.token=$SONAR_TOKEN
 
-      - name: Instalar Semgrep
+      - name: Install Semgrep
         run: pip install semgrep
 
-      - name: Rodar Semgrep
+      - name: Run Semgrep
         run: semgrep --config .semgrep.yaml
 
-      - name: Instalar OWASP Dependency-Check
-        run: |
-          curl -L -o dependency-check.zip https://github.com/jeremylong/DependencyCheck/releases/download/v9.0.9/dependency-check-9.0.9-release.zip
-          unzip dependency-check.zip -d dependency-check
+      - name: Run OWASP Dependency-Check
+        run: >-
+          mvn -B org.owasp:dependency-check-maven:check
+          -DnvdApiKey=$NVD_API_KEY
+          -DfailBuildOnCVSS=7
+          -Dformats=HTML
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
-        #TEMPORÁRIO - NVD FORA
-#      - name: Rodar OWASP Dependency-Check
-#        run: |
-#          ./dependency-check/dependency-check/bin/dependency-check.sh --project "Lib Project" --scan . --format ALL --failOnCVSS 7
-
-      - name: Upload Relatório OWASP (HTML)
-        uses: actions/upload-artifact@v4
+      - name: Upload OWASP Report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: owasp-report
-          path: dependency-check-report.html
+          name: owasp-dependency-check-report
+          path: target/dependency-check-report.html

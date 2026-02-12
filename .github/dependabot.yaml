@@ -1,3 +1,4 @@
+---
 version: 2
 updates:
   - package-ecosystem: "maven"
@@ -6,5 +7,5 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     ignore:
-      - dependency-name: "org.springframework.*"
-        versions: ["999.0.0"]
+      - dependency-name: "org.springframework*"
+        update-types: ["version-update:semver-major"]
