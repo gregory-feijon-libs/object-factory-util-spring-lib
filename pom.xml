@@ -73,7 +73,7 @@
         <jacoco.version>0.8.14</jacoco.version>
         <sonar.plugin.version>5.5.0.6356</sonar.plugin.version>
         <slf4j.version>2.0.17</slf4j.version>
-        <hibernate.version>7.2.1.Final</hibernate.version>
+        <hibernate.version>7.2.4.Final</hibernate.version>
         <spring.starter.version>3.5.10</spring.starter.version>
         <spring.version>6.2.15</spring.version>
     </properties>
