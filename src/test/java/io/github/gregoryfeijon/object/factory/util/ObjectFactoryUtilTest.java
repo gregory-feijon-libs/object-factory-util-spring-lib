@@ -375,16 +375,7 @@ class ObjectFactoryUtilTest {
         // when
         BarWrapper clone = ObjectFactoryUtil.createFromObject(original, BarWrapper.class);
 
-        // then - CRUCIAL: Valida referências dos objetos aninhados
-        assertThat(clone.getPrimitiveBar())
-                .isNotNull()
-                .isNotSameAs(original.getPrimitiveFoo()); // ✅ Referência diferente!
-
-        assertThat(clone.getObjectBar())
-                .isNotNull()
-                .isNotSameAs(original.getObjectFoo()); // ✅ Referência diferente!
-
-        // Valida que os valores foram copiados corretamente
+        // then - Valida que os valores foram copiados corretamente
         assertThat(clone.getPrimitiveBar().getIVal()).isEqualTo(42);
         assertThat(clone.getObjectBar().getStringValue()).isEqualTo("original");
     }

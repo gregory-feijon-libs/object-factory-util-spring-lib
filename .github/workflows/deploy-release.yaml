@@ -1,3 +1,4 @@
+---
 name: Release - Maven Central Deploy
 
 on:

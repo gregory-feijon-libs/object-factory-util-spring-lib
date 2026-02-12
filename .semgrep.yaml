@@ -1,4 +1,7 @@
+---
 rules:
+  # === Project-specific allowlists ===
+
   - id: java.lang.security.audit.unsafe-reflection.classutils
     pattern: ClassUtils.getClass(...)
     message: "Legitimate use of ClassUtils.getClass in a utility method with no user input."
@@ -7,17 +10,73 @@ rules:
       reason: "Class is instantiated internally using known domain types. No user input is involved."
     paths:
       include:
-        - src/main/java/io/github/gregoryfeijon/object/factory/util/utils/serialization/ObjectFactoryUtil.java
+        - src/main/java/io/github/gregoryfeijon/object/factory/util/utils/serialization/internal/TypeResolver.java
         - src/main/java/io/github/gregoryfeijon/object/factory/util/utils/ReflectionTypeUtil.java
     languages: [java]
 
-  - id: java.lang.security.audit.object-deserialization.object-deserialization
-    pattern: new ObjectInputStream(...)
-    message: "ObjectInputStream is used safely with internal byte arrays, no user-controlled input."
-    severity: INFO
-    metadata:
-      reason: "Deserialization only occurs on internal byte[] generated within the application. No external input."
-    paths:
-      include:
-        - src/main/java/io/github/gregoryfeijon/object/factory/util/utils/serialization/SerializationUtil.java
+  # === Security rules ===
+
+  - id: java-lang-security-audit-command-injection
+    pattern-either:
+      - pattern: Runtime.getRuntime().exec(...)
+      - pattern: new ProcessBuilder(...).start()
+    message: Potential command injection vulnerability
     languages: [java]
+    severity: ERROR
+
+  - id: java-lang-security-audit-sql-injection
+    pattern-either:
+      - pattern: |
+          $STMT.executeQuery($X + ...)
+      - pattern: |
+          $STMT.execute($X + ...)
+    message: Potential SQL injection vulnerability
+    languages: [java]
+    severity: ERROR
+
+  - id: java-lang-security-hardcoded-secrets
+    pattern-regex: |-
+      (password|secret|key|token)\s*=\s*["'][^"']{8,}["']
+    message: Potential hardcoded secret found
+    languages: [java]
+    severity: WARNING
+
+  - id: java-spring-security-csrf-disabled
+    pattern-either:
+      - pattern: http.csrf().disable()
+      - pattern: $HTTP.csrf(AbstractHttpConfigurer::disable)
+    message: CSRF protection is disabled
+    languages: [java]
+    severity: WARNING
+
+  - id: java-lang-security-weak-crypto
+    pattern-either:
+      - pattern: Cipher.getInstance("DES")
+      - pattern: Cipher.getInstance("DES/...")
+      - pattern: Cipher.getInstance("RC4")
+      - pattern: MessageDigest.getInstance("MD5")
+      - pattern: MessageDigest.getInstance("SHA1")
+    message: Weak cryptographic algorithm detected
+    languages: [java]
+    severity: WARNING
+
+  # === Best practices ===
+
+  - id: java-lang-best-practice-empty-catch
+    pattern: |
+      try { ... } catch ($E $EX) { }
+    message: Empty catch block - exceptions should be handled or logged
+    languages: [java]
+    severity: INFO
+
+  - id: java-lang-best-practice-system-out
+    pattern-either:
+      - pattern: System.out.println(...)
+      - pattern: System.err.println(...)
+    message: Use proper logging instead of System.out/err
+    languages: [java]
+    severity: INFO
+    paths:
+      exclude:
+        - "**/test/**"
+        - "**/Test*.java"
