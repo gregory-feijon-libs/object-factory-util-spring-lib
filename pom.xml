@@ -75,7 +75,7 @@
         <slf4j.version>2.0.17</slf4j.version>
         <hibernate.version>7.2.4.Final</hibernate.version>
         <spring.starter.version>3.5.10</spring.starter.version>
-        <spring.version>6.2.15</spring.version>
+        <spring.version>6.2.16</spring.version>
     </properties>
 
     <profiles>
