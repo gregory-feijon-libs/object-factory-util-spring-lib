@@ -69,7 +69,7 @@
             **/internal/CopyCache.java,
             **/package-info.java
         </sonar.coverage.exclusions>
-        <lombok.version>1.18.42</lombok.version>
+        <lombok.version>1.18.44</lombok.version>
         <jacoco.version>0.8.14</jacoco.version>
         <sonar.plugin.version>5.5.0.6356</sonar.plugin.version>
         <slf4j.version>2.0.17</slf4j.version>
