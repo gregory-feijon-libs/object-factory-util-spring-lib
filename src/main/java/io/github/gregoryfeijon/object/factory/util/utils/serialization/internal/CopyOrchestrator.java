@@ -6,6 +6,7 @@ import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.Objects;
 
 import static io.github.gregoryfeijon.object.factory.commons.utils.ReflectionTypeUtil.defaultValueFor;
@@ -85,10 +86,31 @@ public final class CopyOrchestrator {
         if (isClassMapCollection(sourceField.getType())) {
             return CollectionMapCloner.serializingCloneCollectionMap(sourceValue, destField.getGenericType());
         }
+        Class<?> effectiveType = resolveEffectiveType(sourceValue, destFieldType);
         try {
-            return ObjectCloner.serializingCloneObjects(sourceValue, destFieldType);
+            return ObjectCloner.serializingCloneObjects(sourceValue, effectiveType);
         } catch (Exception ex) {
             throw new ApiException(ex.getMessage());
         }
+    }
+
+    /**
+     * Resolves the effective type to use for cloning.
+     * <p>
+     * When the declared destination type is abstract or an interface, the runtime
+     * type of the source value is used instead, ensuring that concrete subtypes
+     * (e.g., {@code ObjectNode} declared as {@code JsonNode}) are cloned correctly.
+     * </p>
+     *
+     * @param sourceValue  the source value (may be null)
+     * @param declaredType the declared destination field type
+     * @return the runtime type of {@code sourceValue} if {@code declaredType} is abstract/interface
+     *         and {@code sourceValue} is non-null; otherwise {@code declaredType}
+     */
+    private static Class<?> resolveEffectiveType(Object sourceValue, Class<?> declaredType) {
+        if (sourceValue != null && (Modifier.isAbstract(declaredType.getModifiers()) || declaredType.isInterface())) {
+            return sourceValue.getClass();
+        }
+        return declaredType;
     }
 }
