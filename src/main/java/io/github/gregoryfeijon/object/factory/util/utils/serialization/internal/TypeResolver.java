@@ -6,6 +6,7 @@ import org.apache.commons.lang3.ClassUtils;
 import org.springframework.beans.BeanInstantiationException;
 import org.springframework.beans.BeanUtils;
 
+import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Collection;
@@ -40,7 +41,8 @@ public final class TypeResolver {
 
         for (int i = 0; i < typeArgs.length; i++) {
             Class<?> clazz = extractElementClass(typeArgs[i]);
-            if (!isPrimitiveOrEnum(clazz) && !isWrapperType(clazz)) {
+            if (!isPrimitiveOrEnum(clazz) && !isWrapperType(clazz)
+                    && !Modifier.isAbstract(clazz.getModifiers()) && !clazz.isInterface()) {
                 BeanUtils.instantiateClass(clazz);
             }
             classes[i] = clazz;
@@ -159,5 +161,43 @@ public final class TypeResolver {
             }
         }
         return Object.class;
+    }
+
+    /**
+     * Resolves the effective type to use for cloning given the runtime type and the declared type.
+     * <p>
+     * When the declared type is abstract or an interface, the runtime type is used instead,
+     * ensuring that concrete subtypes (e.g., {@code ObjectNode} declared as {@code JsonNode})
+     * are cloned correctly.
+     * </p>
+     *
+     * @param runtimeType  the actual runtime class of the source value
+     * @param declaredType the declared (static) type
+     * @return {@code runtimeType} if {@code declaredType} is abstract/interface; otherwise {@code declaredType}
+     */
+    public static Class<?> resolveEffectiveType(Class<?> runtimeType, Class<?> declaredType) {
+        if (Modifier.isAbstract(declaredType.getModifiers()) || declaredType.isInterface()) {
+            return runtimeType;
+        }
+        return declaredType;
+    }
+
+    /**
+     * Resolves the effective type to use for cloning given the source value and the declared type.
+     * <p>
+     * When the declared type is abstract or an interface and {@code sourceValue} is non-null,
+     * the runtime class of {@code sourceValue} is used instead.
+     * </p>
+     *
+     * @param sourceValue  the source value (may be null)
+     * @param declaredType the declared (static) type
+     * @return the runtime type of {@code sourceValue} if {@code declaredType} is abstract/interface
+     *         and {@code sourceValue} is non-null; otherwise {@code declaredType}
+     */
+    public static Class<?> resolveEffectiveType(Object sourceValue, Class<?> declaredType) {
+        if (sourceValue == null) {
+            return declaredType;
+        }
+        return resolveEffectiveType(sourceValue.getClass(), declaredType);
     }
 }
