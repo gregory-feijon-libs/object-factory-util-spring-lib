@@ -3,7 +3,6 @@ package io.github.gregoryfeijon.object.factory.util.utils.serialization.internal
 import io.github.gregoryfeijon.object.factory.util.domain.PrimitiveFoo;
 import io.github.gregoryfeijon.serializer.provider.util.gson.GsonTypesUtil;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.BeanInstantiationException;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.ParameterizedType;
@@ -15,7 +14,6 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TypeResolverTest {
 
@@ -33,6 +31,10 @@ class TypeResolverTest {
     private Map<String, Runnable> stringRunnableMap;
     @SuppressWarnings("unused")
     private Map<Integer, PrimitiveFoo> intPrimitiveFooMap;
+    @SuppressWarnings("unused")
+    private List<Number> numberList;
+    @SuppressWarnings("unused")
+    private Map<String, Number> stringNumberMap;
 
     private Type genericTypeOf(String fieldName) throws NoSuchFieldException {
         Field f = TypeResolverTest.class.getDeclaredField(fieldName);
@@ -218,39 +220,103 @@ class TypeResolverTest {
         assertThat(result).isEqualTo(Integer.class);
     }
 
-    // ==================== exception paths ====================
+    // ==================== abstract / interface type handling ====================
 
     @Test
-    void verifyAndExtractTypes_shouldThrowBeanInstantiationException_forNonInstantiableType() {
-        // Runnable is an interface — cannot be instantiated by BeanUtils
+    void verifyAndExtractTypes_shouldNotThrow_andReturnType_forInterfaceType() throws Exception {
+        // Runnable is an interface — previously threw BeanInstantiationException, now skips instantiation check
         Type type = GsonTypesUtil.getType(List.class, Runnable.class);
 
-        assertThatThrownBy(() -> TypeResolver.verifyAndExtractTypes(type))
-                .isInstanceOf(BeanInstantiationException.class);
+        Class<?>[] types = TypeResolver.verifyAndExtractTypes(type);
+
+        assertThat(types).hasSize(1);
+        assertThat(types[0]).isEqualTo(Runnable.class);
     }
 
     @Test
-    void verifyType_shouldThrowBeanInstantiationException_forNonInstantiableType() {
-        Type type = GsonTypesUtil.getType(List.class, Runnable.class);
+    void verifyAndExtractTypes_shouldNotThrow_andReturnType_forAbstractType() throws Exception {
+        Type type = GsonTypesUtil.getType(List.class, Number.class);
 
-        assertThatThrownBy(() -> TypeResolver.verifyType(type))
-                .isInstanceOf(BeanInstantiationException.class);
+        Class<?>[] types = TypeResolver.verifyAndExtractTypes(type);
+
+        assertThat(types).hasSize(1);
+        assertThat(types[0]).isEqualTo(Number.class);
     }
 
     @Test
-    void extractCollectionElementType_shouldThrowBeanInstantiationException_forNonInstantiableType() {
+    void verifyType_shouldNotThrow_forInterfaceType() {
         Type type = GsonTypesUtil.getType(List.class, Runnable.class);
 
-        assertThatThrownBy(() -> TypeResolver.extractCollectionElementType(type))
-                .isInstanceOf(BeanInstantiationException.class);
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> TypeResolver.verifyType(type));
     }
 
     @Test
-    void extractMapValueType_shouldThrowBeanInstantiationException_forNonInstantiableValueType() throws Exception {
+    void extractCollectionElementType_shouldReturnType_forInterfaceElementType() throws Exception {
+        Type type = GsonTypesUtil.getType(List.class, Runnable.class);
+
+        Class<?> result = TypeResolver.extractCollectionElementType(type);
+
+        assertThat(result).isEqualTo(Runnable.class);
+    }
+
+    @Test
+    void extractMapValueType_shouldReturnType_forInterfaceValueType() throws Exception {
         Type type = genericTypeOf("stringRunnableMap");
 
-        assertThatThrownBy(() -> TypeResolver.extractMapValueType(type))
-                .isInstanceOf(BeanInstantiationException.class);
+        Class<?> result = TypeResolver.extractMapValueType(type);
+
+        assertThat(result).isEqualTo(Runnable.class);
+    }
+
+    // ==================== resolveEffectiveType ====================
+
+    @Test
+    void resolveEffectiveType_withClass_shouldReturnRuntimeType_whenDeclaredIsAbstract() {
+        Class<?> result = TypeResolver.resolveEffectiveType(Integer.class, Number.class);
+
+        assertThat(result).isEqualTo(Integer.class);
+    }
+
+    @Test
+    void resolveEffectiveType_withClass_shouldReturnRuntimeType_whenDeclaredIsInterface() {
+        Class<?> result = TypeResolver.resolveEffectiveType(String.class, CharSequence.class);
+
+        assertThat(result).isEqualTo(String.class);
+    }
+
+    @Test
+    void resolveEffectiveType_withClass_shouldReturnDeclaredType_whenDeclaredIsConcrete() {
+        Class<?> result = TypeResolver.resolveEffectiveType(Integer.class, Integer.class);
+
+        assertThat(result).isEqualTo(Integer.class);
+    }
+
+    @Test
+    void resolveEffectiveType_withObject_shouldReturnRuntimeType_whenDeclaredIsAbstract() {
+        Class<?> result = TypeResolver.resolveEffectiveType(Integer.valueOf(42), Number.class);
+
+        assertThat(result).isEqualTo(Integer.class);
+    }
+
+    @Test
+    void resolveEffectiveType_withObject_shouldReturnRuntimeType_whenDeclaredIsInterface() {
+        Class<?> result = TypeResolver.resolveEffectiveType("hello", CharSequence.class);
+
+        assertThat(result).isEqualTo(String.class);
+    }
+
+    @Test
+    void resolveEffectiveType_withObject_shouldReturnDeclaredType_whenSourceValueIsNull() {
+        Class<?> result = TypeResolver.resolveEffectiveType((Object) null, Number.class);
+
+        assertThat(result).isEqualTo(Number.class);
+    }
+
+    @Test
+    void resolveEffectiveType_withObject_shouldReturnDeclaredType_whenDeclaredIsConcrete() {
+        Class<?> result = TypeResolver.resolveEffectiveType(Integer.valueOf(42), Integer.class);
+
+        assertThat(result).isEqualTo(Integer.class);
     }
 
     // ==================== primitive/enum/wrapper skip instantiation ====================

@@ -135,13 +135,18 @@ public final class CollectionMapCloner {
                                                  Class<?> sourceElementType,
                                                  Class<?> targetElementType)
             throws ClassNotFoundException {
-        if (sourceElementType == targetElementType) {
+        Class<?> effectiveElementType = TypeResolver.resolveEffectiveType(sourceElementType, targetElementType);
+        if (sourceElementType == effectiveElementType) {
             SerializerAdapter serializer = ObjectCloner.getSerializer();
             String jsonClone = serializer.serialize(sourceCollection);
+            if (effectiveElementType != targetElementType) {
+                Type concreteType = GsonTypesUtil.getType(getRawType(genericType), effectiveElementType);
+                return serializer.deserialize(jsonClone, concreteType);
+            }
             return verifyList(sourceCollection, genericType, jsonClone);
         }
 
-        return convertCollectionElements(sourceCollection, targetElementType);
+        return convertCollectionElements(sourceCollection, effectiveElementType);
     }
 
     private static List<Object> convertCollectionElements(Collection<?> sourceCollection,
@@ -205,14 +210,20 @@ public final class CollectionMapCloner {
     private static Object cloneSimpleMap(Map<?, ?> sourceMap,
                                           Type genericType,
                                           Class<?> sourceValueType,
-                                          Class<?> targetValueType) {
-        if (sourceValueType == targetValueType) {
+                                          Class<?> targetValueType) throws ClassNotFoundException {
+        Class<?> effectiveValueType = TypeResolver.resolveEffectiveType(sourceValueType, targetValueType);
+        if (sourceValueType == effectiveValueType) {
             SerializerAdapter serializer = ObjectCloner.getSerializer();
             String jsonClone = serializer.serialize(sourceMap);
+            if (effectiveValueType != targetValueType) {
+                Class<?> keyType = getRawType(TypeResolver.getNestedGenericType(genericType, 0));
+                Type concreteType = GsonTypesUtil.getType(getRawType(genericType), keyType, effectiveValueType);
+                return serializer.deserialize(jsonClone, concreteType);
+            }
             return serializer.deserialize(jsonClone, genericType);
         }
 
-        return convertMapValues(sourceMap, targetValueType);
+        return convertMapValues(sourceMap, effectiveValueType);
     }
 
     private static Map<Object, Object> convertMapValues(Map<?, ?> sourceMap, Class<?> targetValueType) {
