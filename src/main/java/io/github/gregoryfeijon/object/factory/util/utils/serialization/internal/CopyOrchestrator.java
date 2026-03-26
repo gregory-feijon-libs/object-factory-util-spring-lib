@@ -85,8 +85,9 @@ public final class CopyOrchestrator {
         if (isClassMapCollection(sourceField.getType())) {
             return CollectionMapCloner.serializingCloneCollectionMap(sourceValue, destField.getGenericType());
         }
+        Class<?> effectiveType = TypeResolver.resolveEffectiveType(sourceValue, destFieldType);
         try {
-            return ObjectCloner.serializingCloneObjects(sourceValue, destFieldType);
+            return ObjectCloner.serializingCloneObjects(sourceValue, effectiveType);
         } catch (Exception ex) {
             throw new ApiException(ex.getMessage());
         }

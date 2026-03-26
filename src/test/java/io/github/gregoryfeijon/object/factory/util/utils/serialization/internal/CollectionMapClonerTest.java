@@ -48,6 +48,10 @@ class CollectionMapClonerTest {
     private Map<Integer, Map<Integer, PrimitiveFoo>> nestedPrimitiveFooMap;
     @SuppressWarnings("unused")
     private Map<Integer, Map<Integer, PrimitiveBar>> nestedPrimitiveBarMap;
+    @SuppressWarnings("unused")
+    private List<Number> numberList;
+    @SuppressWarnings("unused")
+    private Map<String, Number> stringNumberMap;
 
     private Type genericTypeOf(String fieldName) throws NoSuchFieldException {
         Field f = CollectionMapClonerTest.class.getDeclaredField(fieldName);
@@ -278,6 +282,60 @@ class CollectionMapClonerTest {
         assertThat(cloned.get(0).getIntValue()).isEqualTo(1);
         assertThat(cloned.get(1).getIntValue()).isEqualTo(2);
         assertThat(cloned.get(2).getIntValue()).isEqualTo(3);
+    }
+
+    // ==================== abstract element / value type ====================
+
+    @Test
+    void serializingCloneCollectionMap_shouldCloneList_withAbstractElementType() throws Exception {
+        List<Number> source = new ArrayList<>(List.of(42, 100));
+        Type type = genericTypeOf("numberList");
+
+        Object result = CollectionMapCloner.serializingCloneCollectionMap(source, type);
+
+        assertThat(result).isInstanceOf(List.class);
+        @SuppressWarnings("unchecked")
+        List<Number> cloned = (List<Number>) result;
+        assertThat(cloned).hasSize(2);
+        assertThat(cloned.getFirst()).isEqualTo(42);
+    }
+
+    @Test
+    void serializingCloneCollectionMap_shouldDeepCloneList_withAbstractElementType_elementsAreNewReferences() throws Exception {
+        Integer element = 42;
+        List<Number> source = new ArrayList<>(List.of(element));
+        Type type = genericTypeOf("numberList");
+
+        Object result = CollectionMapCloner.serializingCloneCollectionMap(source, type);
+
+        @SuppressWarnings("unchecked")
+        List<Number> cloned = (List<Number>) result;
+        assertThat(cloned).isNotSameAs(source);
+        assertThat(cloned.getFirst()).isEqualTo(42);
+    }
+
+    @Test
+    void serializingCloneCollectionMap_shouldCloneMap_withAbstractValueType() throws Exception {
+        Map<String, Number> source = new HashMap<>(Map.of("a", 42, "b", 100));
+        Type type = genericTypeOf("stringNumberMap");
+
+        Object result = CollectionMapCloner.serializingCloneCollectionMap(source, type);
+
+        assertThat(result).isInstanceOf(Map.class);
+        @SuppressWarnings("unchecked")
+        Map<String, Number> cloned = (Map<String, Number>) result;
+        assertThat(cloned).containsKeys("a", "b");
+        assertThat(cloned.get("a")).isEqualTo(42);
+    }
+
+    @Test
+    void serializingCloneCollectionMap_shouldCloneMap_withAbstractValueType_isNewReference() throws Exception {
+        Map<String, Number> source = new HashMap<>(Map.of("key", 42));
+        Type type = genericTypeOf("stringNumberMap");
+
+        Object result = CollectionMapCloner.serializingCloneCollectionMap(source, type);
+
+        assertThat(result).isNotSameAs(source);
     }
 
     @Test

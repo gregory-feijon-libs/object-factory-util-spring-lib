@@ -222,4 +222,60 @@ class CopyOrchestratorTest {
         Thread threadSource;
         Thread threadDest;
     }
+
+    // ==================== abstract / interface dest field type ====================
+
+    abstract static class AbstractBase { }
+
+    static class ConcreteImpl extends AbstractBase { }
+
+    interface BaseInterface { }
+
+    static class InterfaceImpl implements BaseInterface { }
+
+    @SuppressWarnings("unused")
+    static class AbstractTypeHolder {
+        AbstractBase abstractField;
+        BaseInterface interfaceField;
+    }
+
+    @Test
+    void copyValue_shouldUseRuntimeType_whenDestFieldTypeIsAbstract() throws Exception {
+        ConcreteImpl value = new ConcreteImpl();
+        Field sf = AbstractTypeHolder.class.getDeclaredField("abstractField");
+        Field df = AbstractTypeHolder.class.getDeclaredField("abstractField");
+        sf.setAccessible(true);
+        df.setAccessible(true);
+
+        Object result = CopyOrchestrator.copyValue(sf, df, value);
+
+        assertThat(result).isInstanceOf(ConcreteImpl.class);
+        assertThat(result).isNotSameAs(value);
+    }
+
+    @Test
+    void copyValue_shouldUseRuntimeType_whenDestFieldTypeIsInterface() throws Exception {
+        InterfaceImpl value = new InterfaceImpl();
+        Field sf = AbstractTypeHolder.class.getDeclaredField("interfaceField");
+        Field df = AbstractTypeHolder.class.getDeclaredField("interfaceField");
+        sf.setAccessible(true);
+        df.setAccessible(true);
+
+        Object result = CopyOrchestrator.copyValue(sf, df, value);
+
+        assertThat(result).isInstanceOf(InterfaceImpl.class);
+        assertThat(result).isNotSameAs(value);
+    }
+
+    @Test
+    void copyValue_shouldReturnNull_whenSourceIsNull_andDestFieldTypeIsAbstract() throws Exception {
+        Field sf = AbstractTypeHolder.class.getDeclaredField("abstractField");
+        Field df = AbstractTypeHolder.class.getDeclaredField("abstractField");
+        sf.setAccessible(true);
+        df.setAccessible(true);
+
+        Object result = CopyOrchestrator.copyValue(sf, df, null);
+
+        assertThat(result).isNull();
+    }
 }
