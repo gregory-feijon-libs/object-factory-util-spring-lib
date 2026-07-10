@@ -77,23 +77,36 @@ public final class FieldResolver {
      */
     @SuppressWarnings("java:S6204")
     static Map<String, Field> buildFieldKeyMap(List<Field> fields) {
-        return fields.stream()
-                .collect(Collectors.groupingBy(Field::getDeclaringClass))
-                .entrySet().stream()
-                .flatMap(entry -> CopyCache.getOrComputeFieldKeyMap(
-                        entry.getKey(),
-                        cls -> entry.getValue().stream()
-                                .collect(Collectors.toMap(
-                                        FieldResolver::resolveFieldKey,
-                                        Function.identity(),
-                                        (a, b) -> {
-                                            log.warn("Duplicate field key '{}' detected in class '{}'. Keeping first occurrence.",
-                                                    a.getName(), cls.getSimpleName());
-                                            return a;
-                                        })
-                                )
-                ).entrySet().stream())
+        Map<Class<?>, List<Field>> fieldsByDeclaringClass = fields.stream()
+                .collect(Collectors.groupingBy(Field::getDeclaringClass));
+
+        return fieldsByDeclaringClass.entrySet().stream()
+                .flatMap(entry -> CopyCache.getOrComputeFieldKeyMap(entry.getKey(), cls -> toFieldKeyMap(cls, entry.getValue()))
+                        .entrySet().stream())
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    }
+
+    /**
+     * Builds a normalized key-to-field map for a single declaring class, logging and
+     * keeping the first occurrence whenever two fields resolve to the same key.
+     *
+     * @param declaringClass the class the fields belong to
+     * @param classFields    the fields declared by that class
+     * @return a map of normalized field names to {@link Field} objects
+     */
+    private static Map<String, Field> toFieldKeyMap(Class<?> declaringClass, List<Field> classFields) {
+        return classFields.stream()
+                .collect(Collectors.toMap(
+                        FieldResolver::resolveFieldKey,
+                        Function.identity(),
+                        (first, second) -> logAndKeepFirstDuplicate(declaringClass, first)
+                ));
+    }
+
+    private static Field logAndKeepFirstDuplicate(Class<?> declaringClass, Field first) {
+        log.warn("Duplicate field key '{}' detected in class '{}'. Keeping first occurrence.",
+                first.getName(), declaringClass.getSimpleName());
+        return first;
     }
 
     /**
