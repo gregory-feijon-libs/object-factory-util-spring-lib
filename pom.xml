@@ -70,7 +70,7 @@
             **/package-info.java
         </sonar.coverage.exclusions>
         <lombok.version>1.18.46</lombok.version>
-        <jacoco.version>0.8.14</jacoco.version>
+        <jacoco.version>0.8.15</jacoco.version>
         <sonar.plugin.version>5.6.0.6792</sonar.plugin.version>
         <slf4j.version>2.0.18</slf4j.version>
         <hibernate.version>6.6.50.Final</hibernate.version>
