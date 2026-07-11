@@ -5,7 +5,7 @@
 
     <groupId>io.github.gregoryfeijon</groupId>
     <artifactId>object-factory-util-spring-lib</artifactId>
-    <version>2.6.2</version>
+    <version>2.6.3</version>
     <name>object-factory-util-spring-lib</name>
     <description>Java library that create copy from objects and collections with new memory reference. Version
         for spring projects.
@@ -70,12 +70,12 @@
             **/package-info.java
         </sonar.coverage.exclusions>
         <lombok.version>1.18.46</lombok.version>
-        <jacoco.version>0.8.14</jacoco.version>
-        <sonar.plugin.version>5.6.0.6792</sonar.plugin.version>
+        <jacoco.version>0.8.15</jacoco.version>
+        <sonar.plugin.version>5.7.0.6970</sonar.plugin.version>
         <slf4j.version>2.0.18</slf4j.version>
-        <hibernate.version>6.6.50.Final</hibernate.version>
-        <spring.starter.version>3.5.14</spring.starter.version>
-        <spring.version>6.2.18</spring.version>
+        <hibernate.version>6.6.54.Final</hibernate.version>
+        <spring.starter.version>3.5.16</spring.starter.version>
+        <spring.version>6.2.19</spring.version>
     </properties>
 
     <profiles>
@@ -182,19 +182,19 @@
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-api</artifactId>
-            <version>2.26.0</version>
+            <version>2.26.1</version>
             <scope>compile</scope>
         </dependency>
 
         <dependency>
             <groupId>io.github.gregoryfeijon</groupId>
             <artifactId>object-factory-commons-spring-lib</artifactId>
-            <version>1.1.2</version>
+            <version>2.0.0</version>
         </dependency>
         <dependency>
             <groupId>io.github.gregoryfeijon</groupId>
             <artifactId>serializer-provider-spring-lib</artifactId>
-            <version>2.6.2</version>
+            <version>2.6.5</version>
         </dependency>
     </dependencies>
 
@@ -226,7 +226,7 @@
             <plugin>
                 <groupId>org.sonatype.central</groupId>
                 <artifactId>central-publishing-maven-plugin</artifactId>
-                <version>0.10.0</version>
+                <version>0.11.0</version>
                 <extensions>true</extensions>
                 <configuration>
                     <publishingServerId>central</publishingServerId>
