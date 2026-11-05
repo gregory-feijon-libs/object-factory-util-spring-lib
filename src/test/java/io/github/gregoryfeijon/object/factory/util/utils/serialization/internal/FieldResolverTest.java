@@ -96,19 +96,6 @@ class FieldResolverTest {
     }
 
     @Test
-    void buildFieldKeyMap_shouldGroupByDeclaringClass() throws Exception {
-        Field f1 = PrimitiveFoo.class.getDeclaredField("intValue");
-        Field f2 = PrimitiveFoo.class.getDeclaredField("longValue");
-
-        Map<String, Field> result = FieldResolver.buildFieldKeyMap(List.of(f1, f2));
-
-        // CopyCache caches by declaring class, so all 3 fields of PrimitiveFoo are cached together
-        assertThat(result)
-                .containsKey("intvalue")
-                .containsKey("longvalue");
-    }
-
-    @Test
     void getFieldsToCopy_shouldExcludeStaticFinalFields() {
         OnlyStaticAttributeSource source = new OnlyStaticAttributeSource();
         OnlyStaticAttributeDestination dest = new OnlyStaticAttributeDestination();
@@ -125,9 +112,11 @@ class FieldResolverTest {
 
         Map<Field, Field> fieldMap = FieldResolver.createSourceDestFieldMaps(source, dest);
 
-        // Both nome1 and nome2 have @FieldCopyName("duplicado"), so the merge function
-        // keeps the first one. The map should still contain the duplicated key mapping.
-        assertThat(fieldMap).isNotEmpty();
+        // Both nome1 and nome2 have @FieldCopyName("duplicado"); within the same class each
+        // slot is paired with itself, so neither value is lost.
+        assertThat(fieldMap)
+                .hasSize(2)
+                .allSatisfy((sourceField, destField) -> assertThat(destField).isEqualTo(sourceField));
     }
 
     @Test

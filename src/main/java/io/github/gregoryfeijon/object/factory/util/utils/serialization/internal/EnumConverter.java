@@ -4,8 +4,8 @@ import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 
 import java.lang.reflect.Field;
-import java.util.Objects;
-import java.util.stream.Stream;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Handles enum type conversions during object copy operations.
@@ -17,11 +17,26 @@ import java.util.stream.Stream;
  *   <li>Enum → String: converts to string representation</li>
  *   <li>Enum → Enum: converts between different enum types by matching names</li>
  * </ul>
+ * <p>
+ * Constant lookups are memoized per enum class through a {@link ClassValue}, turning each
+ * conversion into an O(1) map lookup without preventing class unloading.
+ * </p>
  *
  * @author gregory.feijon
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class EnumConverter {
+
+    private static final ClassValue<Map<String, Object>> CONSTANTS_BY_NAME = new ClassValue<>() {
+        @Override
+        protected Map<String, Object> computeValue(Class<?> type) {
+            Map<String, Object> constants = new HashMap<>();
+            for (Object constant : type.getEnumConstants()) {
+                constants.putIfAbsent(constant.toString(), constant);
+            }
+            return Map.copyOf(constants);
+        }
+    };
 
     /**
      * Validates and converts enum values between source and destination fields.
@@ -32,20 +47,19 @@ public final class EnumConverter {
      * @return the converted value, or null if conversion is not possible
      */
     public static Object validateEnums(Field sourceField, Field destField, Object sourceValue) {
-        Class<?> sourceFieldType = sourceField.getType();
-        Class<?> destFieldType = destField.getType();
+        Class<?> sourceType = sourceField.getType();
+        Class<?> destType = destField.getType();
 
-        if (destFieldType.isEnum()) {
-            if (sourceFieldType.equals(String.class)) {
-                return findEnumConstantEquivalent(destFieldType, sourceValue);
-            } else if (sourceFieldType.isEnum() && sourceValue != null) {
-                return findEnumConstantEquivalent(destFieldType, sourceValue.toString());
-            }
+        if (destType.isEnum() && sourceType.equals(String.class)) {
+            return findEnumConstantEquivalent(destType, sourceValue);
         }
-        if (sourceFieldType.isEnum() && (sourceValue != null && destFieldType.equals(String.class))) {
-            return sourceValue.toString();
+        if (!sourceType.isEnum() || sourceValue == null) {
+            return null;
         }
-        return null;
+        if (destType.isEnum()) {
+            return findEnumConstantEquivalent(destType, sourceValue.toString());
+        }
+        return destType.equals(String.class) ? sourceValue.toString() : null;
     }
 
     /**
@@ -56,9 +70,6 @@ public final class EnumConverter {
      * @return the matching enum constant, or null if no match is found
      */
     static Object findEnumConstantEquivalent(Class<?> type, Object sourceValue) {
-        return Stream.of(type.getEnumConstants())
-                .filter(enumConstant -> Objects.equals(enumConstant.toString(), sourceValue))
-                .findFirst()
-                .orElse(null);
+        return sourceValue instanceof String name ? CONSTANTS_BY_NAME.get(type).get(name) : null;
     }
 }
