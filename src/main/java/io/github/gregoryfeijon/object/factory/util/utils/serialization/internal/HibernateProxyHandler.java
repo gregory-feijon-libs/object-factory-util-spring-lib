@@ -19,6 +19,7 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 /**
@@ -43,19 +44,17 @@ public final class HibernateProxyHandler {
      */
     @SuppressWarnings("unchecked")
     public static Object unproxyValueIfNeeded(Object value) {
+        if (!HibernateProxyChecker.isHibernateAvailable()) {
+            return value; // no proxies can exist: skip scanning collections/maps entirely
+        }
         if (HibernateProxyChecker.isHibernateProxy(value)) {
             return HibernateProxyChecker.unproxy(value);
         }
-
-        if (value instanceof Collection<?>) {
-            return unproxyCollection((Collection<Object>) value);
-        }
-
-        if (value instanceof Map<?, ?>) {
-            return unproxyMap((Map<Object, Object>) value);
-        }
-
-        return value;
+        return switch (value) {
+            case Collection<?> collection -> unproxyCollection((Collection<Object>) collection);
+            case Map<?, ?> map -> unproxyMap((Map<Object, Object>) map);
+            case null, default -> value;
+        };
     }
 
     @SuppressWarnings("unchecked")
@@ -97,19 +96,11 @@ public final class HibernateProxyHandler {
                         || HibernateProxyChecker.isHibernateProxy(e.getValue()));
     }
 
-    @SuppressWarnings({"unchecked", "java:S108"})
     static <T> Collection<T> recreateCollection(Collection<T> original, List<T> unproxied) {
-        try {
-            Collection<T> result = original.getClass()
-                    .getDeclaredConstructor()
-                    .newInstance();
-            result.addAll(unproxied);
+        Collection<T> result = recreateSameType(original, copy -> copy.addAll(unproxied));
+        if (result != null) {
             return result;
-        } catch (Exception e) {
-            log.trace("Could not instantiate exact collection type {}. Using type-based fallback.",
-                    original.getClass().getSimpleName());
         }
-
         return switch (original) {
             case Set<T> ignored -> new HashSet<>(unproxied);
             case Deque<T> ignored -> new ArrayDeque<>(unproxied);
@@ -118,24 +109,35 @@ public final class HibernateProxyHandler {
         };
     }
 
-    @SuppressWarnings({"unchecked", "java:S108"})
     static <T, S> Map<T, S> recreateMap(Map<T, S> original, Map<T, S> unproxied) {
-        try {
-            Map<T, S> result = original.getClass()
-                    .getDeclaredConstructor()
-                    .newInstance();
-            result.putAll(unproxied);
+        Map<T, S> result = recreateSameType(original, copy -> copy.putAll(unproxied));
+        if (result != null) {
             return result;
-        } catch (Exception e) {
-            log.trace("Could not instantiate exact map type {}. Using type-based fallback.",
-                    original.getClass().getSimpleName());
         }
-
         return switch (original) {
             case LinkedHashMap<T, S> ignored -> new LinkedHashMap<>(unproxied);
             case TreeMap<T, S> ignored -> new TreeMap<>(unproxied);
             case ConcurrentHashMap<T, S> ignored -> new ConcurrentHashMap<>(unproxied);
             default -> new HashMap<>(unproxied);
         };
+    }
+
+    /**
+     * Tries to instantiate the exact runtime type of {@code original} through its no-arg constructor
+     * and fill it with {@code filler}.
+     *
+     * @return the filled instance, or {@code null} when the type cannot be instantiated or filled
+     */
+    @SuppressWarnings("unchecked")
+    private static <C> C recreateSameType(C original, Consumer<C> filler) {
+        try {
+            C copy = (C) original.getClass().getDeclaredConstructor().newInstance();
+            filler.accept(copy);
+            return copy;
+        } catch (Exception e) {
+            log.trace("Could not instantiate exact type {}. Using type-based fallback.",
+                    original.getClass().getSimpleName());
+            return null;
+        }
     }
 }

@@ -2,6 +2,7 @@ package io.github.gregoryfeijon.object.factory.util.utils.serialization;
 
 
 import io.github.gregoryfeijon.object.factory.commons.utils.FieldUtil;
+import io.github.gregoryfeijon.object.factory.util.domain.model.FieldMapping;
 import io.github.gregoryfeijon.object.factory.util.utils.serialization.internal.CopyOrchestrator;
 import io.github.gregoryfeijon.object.factory.util.utils.serialization.internal.FieldResolver;
 import io.github.gregoryfeijon.object.factory.util.utils.serialization.internal.ValidationUtil;
@@ -9,10 +10,8 @@ import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import org.springframework.beans.BeanUtils;
 
-import java.lang.reflect.Field;
 import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -155,16 +154,18 @@ public final class ObjectFactoryUtil {
      */
     public static <T, S> void createFromObject(S source, T dest) {
         ValidationUtil.verifySourceAndDestObjects(source, dest);
-        Map<Field, Field> sourceDestFieldsMap = FieldResolver.createSourceDestFieldMaps(source, dest);
+        List<FieldMapping> mappings = FieldResolver.resolveFieldMappings(source, dest);
 
-        Stream<Map.Entry<Field, Field>> stream = sourceDestFieldsMap.size() >= PARALLEL_STREAM_THRESHOLD
-                ? sourceDestFieldsMap.entrySet().parallelStream()
-                : sourceDestFieldsMap.entrySet().stream();
+        Stream<FieldMapping> stream = mappings.size() >= PARALLEL_STREAM_THRESHOLD
+                ? mappings.parallelStream()
+                : mappings.stream();
 
-        stream.forEach(fieldsEntry -> {
-            Object sourceValue = CopyOrchestrator.verifyValue(fieldsEntry.getKey(), fieldsEntry.getValue(), source);
-            FieldUtil.setProtectedFieldValue(fieldsEntry.getValue(), dest, sourceValue);
-        });
+        stream.forEach(mapping -> copyField(mapping, source, dest));
+    }
+
+    private static void copyField(FieldMapping mapping, Object source, Object dest) {
+        Object value = CopyOrchestrator.verifyValue(mapping.sourceField(), mapping.destField(), source);
+        FieldUtil.setProtectedFieldValue(mapping.destField(), dest, value);
     }
 
     private static <T> Function<T, T> createCopy() {

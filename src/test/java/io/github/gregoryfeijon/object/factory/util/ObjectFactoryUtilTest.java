@@ -244,14 +244,15 @@ class ObjectFactoryUtilTest {
     }
 
     @Test
-    void shouldKeepFirstFieldWhenDuplicateKeyInSameClassOccurs() {
+    void shouldCopyEachSlotWhenDuplicateKeyInSameClassOccurs() {
         var source = TestObjectsFactory.createFooDuplicatedObject();
 
-        // Deve internamente chamar buildFieldKeyMap e cair no (a, b) -> a
+        // nome1 e nome2 compartilham @FieldCopyName("duplicado"); na mesma classe cada slot
+        // é pareado com ele mesmo, então nenhum valor é perdido
         var result = ObjectFactoryUtil.createFromObject(source, FooDuplicated.class);
 
-        // Se não deu exceção, o merge foi resolvido corretamente
-        assertThat(result).isNotNull();
+        assertThat(result.getNome1()).isEqualTo("nome 1 duplicado");
+        assertThat(result.getNome2()).isEqualTo("nome 2 duplicado");
     }
 
     @Test

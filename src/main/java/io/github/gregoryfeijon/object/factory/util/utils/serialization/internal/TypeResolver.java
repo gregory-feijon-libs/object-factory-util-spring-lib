@@ -41,14 +41,36 @@ public final class TypeResolver {
 
         for (int i = 0; i < typeArgs.length; i++) {
             Class<?> clazz = extractElementClass(typeArgs[i]);
-            if (!isPrimitiveOrEnum(clazz) && !isWrapperType(clazz)
-                    && !Modifier.isAbstract(clazz.getModifiers()) && !clazz.isInterface()) {
-                BeanUtils.instantiateClass(clazz);
-            }
+            verifyInstantiable(clazz);
             classes[i] = clazz;
         }
 
         return classes;
+    }
+
+    /**
+     * Memoized result of "can this concrete class be instantiated through its no-arg constructor?".
+     * Avoids creating a throwaway instance on every collection/map copy.
+     */
+    private static final ClassValue<Boolean> INSTANTIABLE = new ClassValue<>() {
+        @Override
+        @SuppressWarnings("java:S1166")
+        protected Boolean computeValue(Class<?> type) {
+            try {
+                BeanUtils.instantiateClass(type);
+                return Boolean.TRUE;
+            } catch (BeanInstantiationException ex) {
+                return Boolean.FALSE;
+            }
+        }
+    };
+
+    private static void verifyInstantiable(Class<?> clazz) {
+        boolean requiresCheck = !isPrimitiveOrEnum(clazz) && !isWrapperType(clazz)
+                && !Modifier.isAbstract(clazz.getModifiers()) && !clazz.isInterface();
+        if (requiresCheck && !INSTANTIABLE.get(clazz)) {
+            BeanUtils.instantiateClass(clazz); // re-run to surface the original BeanInstantiationException
+        }
     }
 
     /**

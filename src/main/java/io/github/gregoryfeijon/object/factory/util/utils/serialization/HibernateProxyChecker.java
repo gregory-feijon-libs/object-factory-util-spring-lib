@@ -2,6 +2,7 @@ package io.github.gregoryfeijon.object.factory.util.utils.serialization;
 
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
+import org.springframework.beans.BeanUtils;
 
 import java.lang.reflect.Method;
 
@@ -10,46 +11,16 @@ import java.lang.reflect.Method;
  * <p>
  * This class uses reflection to avoid ClassNotFoundException when Hibernate is not in the classpath.
  * All Hibernate-specific operations are isolated here to allow the library to work in projects
- * with or without Hibernate.
+ * with or without Hibernate. The reflective handles are resolved once, at class initialization.
  * </p>
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class HibernateProxyChecker {
 
-    private static final Class<?> HIBERNATE_PROXY_CLASS;
-    private static final Class<?> LAZY_INITIALIZER_CLASS;
-    private static final Method GET_LAZY_INITIALIZER_METHOD;
-    private static final Method IS_UNINITIALIZED_METHOD;
-    private static final Method GET_IMPLEMENTATION_METHOD;
-    private static final Method GET_PERSISTENT_CLASS_METHOD;
-
-    static {
-        Class<?> proxyClass = null;
-        Class<?> lazyInitClass = null;
-        Method getLazyInitMethod = null;
-        Method isUninitMethod = null;
-        Method getImplMethod = null;
-        Method getPersistentClassMethod = null;
-
-        try {
-            proxyClass = Class.forName("org.hibernate.proxy.HibernateProxy");
-            lazyInitClass = Class.forName("org.hibernate.proxy.LazyInitializer");
-
-            getLazyInitMethod = proxyClass.getMethod("getHibernateLazyInitializer");
-            isUninitMethod = lazyInitClass.getMethod("isUninitialized");
-            getImplMethod = lazyInitClass.getMethod("getImplementation");
-            getPersistentClassMethod = lazyInitClass.getMethod("getPersistentClass");
-        } catch (ClassNotFoundException | NoSuchMethodException e) {
-            // Hibernate não está disponível - isso é OK
-        }
-
-        HIBERNATE_PROXY_CLASS = proxyClass;
-        LAZY_INITIALIZER_CLASS = lazyInitClass;
-        GET_LAZY_INITIALIZER_METHOD = getLazyInitMethod;
-        IS_UNINITIALIZED_METHOD = isUninitMethod;
-        GET_IMPLEMENTATION_METHOD = getImplMethod;
-        GET_PERSISTENT_CLASS_METHOD = getPersistentClassMethod;
-    }
+    /**
+     * Reflective handles to the Hibernate proxy API, or {@code null} when Hibernate is absent.
+     */
+    private static final HibernateApi HIBERNATE = HibernateApi.load();
 
     /**
      * Checks if Hibernate is available in the classpath.
@@ -61,12 +32,7 @@ public final class HibernateProxyChecker {
      * @return {@code true} if Hibernate is fully available, {@code false} otherwise
      */
     public static boolean isHibernateAvailable() {
-        return HIBERNATE_PROXY_CLASS != null
-                && LAZY_INITIALIZER_CLASS != null
-                && GET_LAZY_INITIALIZER_METHOD != null
-                && IS_UNINITIALIZED_METHOD != null
-                && GET_IMPLEMENTATION_METHOD != null
-                && GET_PERSISTENT_CLASS_METHOD != null;
+        return HIBERNATE != null;
     }
 
     /**
@@ -79,8 +45,7 @@ public final class HibernateProxyChecker {
      * @return {@code true} if the object is a Hibernate proxy, {@code false} otherwise
      */
     public static boolean isHibernateProxy(Object value) {
-        return isHibernateAvailable()
-                && HIBERNATE_PROXY_CLASS.isInstance(value);
+        return HIBERNATE != null && HIBERNATE.proxyClass().isInstance(value);
     }
 
     /**
@@ -100,19 +65,37 @@ public final class HibernateProxyChecker {
         if (!isHibernateProxy(proxy)) {
             return proxy;
         }
-
         try {
-            Object lazyInitializer = GET_LAZY_INITIALIZER_METHOD.invoke(proxy);
-            boolean isUninitialized = (boolean) IS_UNINITIALIZED_METHOD.invoke(lazyInitializer);
-
-            if (isUninitialized) {
-                Class<?> persistentClass = (Class<?>) GET_PERSISTENT_CLASS_METHOD.invoke(lazyInitializer);
-                return org.springframework.beans.BeanUtils.instantiateClass(persistentClass);
+            Object lazyInitializer = HIBERNATE.getLazyInitializer().invoke(proxy);
+            if ((boolean) HIBERNATE.isUninitialized().invoke(lazyInitializer)) {
+                Class<?> persistentClass = (Class<?>) HIBERNATE.getPersistentClass().invoke(lazyInitializer);
+                return BeanUtils.instantiateClass(persistentClass);
             }
-
-            return GET_IMPLEMENTATION_METHOD.invoke(lazyInitializer);
+            return HIBERNATE.getImplementation().invoke(lazyInitializer);
         } catch (Exception e) {
             return proxy;
+        }
+    }
+
+    private record HibernateApi(Class<?> proxyClass,
+                                Method getLazyInitializer,
+                                Method isUninitialized,
+                                Method getImplementation,
+                                Method getPersistentClass) {
+
+        @SuppressWarnings("java:S1166")
+        static HibernateApi load() {
+            try {
+                Class<?> proxyClass = Class.forName("org.hibernate.proxy.HibernateProxy");
+                Class<?> lazyInitClass = Class.forName("org.hibernate.proxy.LazyInitializer");
+                return new HibernateApi(proxyClass,
+                        proxyClass.getMethod("getHibernateLazyInitializer"),
+                        lazyInitClass.getMethod("isUninitialized"),
+                        lazyInitClass.getMethod("getImplementation"),
+                        lazyInitClass.getMethod("getPersistentClass"));
+            } catch (ClassNotFoundException | NoSuchMethodException | LinkageError e) {
+                return null; // Hibernate is not on the classpath - proxy handling is disabled
+            }
         }
     }
 }
