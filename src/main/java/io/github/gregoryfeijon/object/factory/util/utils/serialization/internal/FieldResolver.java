@@ -6,6 +6,7 @@ import io.github.gregoryfeijon.object.factory.util.domain.annotation.ObjectConst
 import io.github.gregoryfeijon.object.factory.util.domain.annotation.ObjectCopyExclude;
 import io.github.gregoryfeijon.object.factory.util.domain.annotation.ObjectCopyExclusions;
 import io.github.gregoryfeijon.object.factory.util.domain.model.ClassPairKey;
+import io.github.gregoryfeijon.object.factory.util.domain.model.FieldMapping;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -13,24 +14,38 @@ import org.springframework.util.StringUtils;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
+import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
-import java.util.function.Function;
-import java.util.function.Predicate;
 import java.util.stream.Collectors;
-
-import static java.util.Arrays.stream;
 
 /**
  * Resolves and matches fields between source and destination objects,
  * applying exclusion rules and annotation-based mappings.
+ * <p>
+ * Matching is hierarchy-aware, so that hidden (shadowed) fields keep their own state:
+ * </p>
+ * <ol>
+ *   <li><b>Exact match</b>: same logical key <em>and</em> same declaring class. Copies within the
+ *       same hierarchy therefore preserve every slot, including a parent field hidden by a child.</li>
+ *   <li><b>Name fallback</b>: remaining fields are paired by logical key in hierarchy order
+ *       (most-derived first), mirroring how Java resolves {@code obj.field}. When the source has
+ *       more fields for a key than the destination can receive, the extra ones are skipped with a warning.</li>
+ * </ol>
+ * <p>
+ * Destination fields annotated with {@link ObjectCopyExclude} and static final fields never receive values.
+ * The result depends only on the (source class, destination class) pair, so it is memoized in
+ * {@link CopyCache} and computed exactly once per pair.
+ * </p>
  *
  * @author gregory.feijon
  */
@@ -38,7 +53,27 @@ import static java.util.Arrays.stream;
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class FieldResolver {
 
-    private static final Predicate<Field> PREDICATE_MODIFIERS = predicateModifiers();
+    /**
+     * Identity of a field slot inside a hierarchy: its declaring class plus its logical key.
+     */
+    private record FieldSlot(Class<?> declaringClass, String key) {
+        static FieldSlot of(Field field) {
+            return new FieldSlot(field.getDeclaringClass(), resolveFieldKey(field));
+        }
+    }
+
+    /**
+     * Returns the cached field mappings between the classes of the given objects,
+     * computing them on first use.
+     *
+     * @param source the source object whose fields are to be copied
+     * @param dest   the destination object that will receive the values
+     * @return an immutable list of source/destination field pairs
+     */
+    public static List<FieldMapping> resolveFieldMappings(Object source, Object dest) {
+        ClassPairKey key = new ClassPairKey(source.getClass(), dest.getClass());
+        return CopyCache.getOrComputeFieldMappings(key, k -> computeFieldMappings(source, dest));
+    }
 
     /**
      * Creates a mapping between source and destination fields that share
@@ -51,62 +86,74 @@ public final class FieldResolver {
      * @return a map where the key is the source field and the value is the corresponding destination field
      */
     public static <S, T> Map<Field, Field> createSourceDestFieldMaps(S source, T dest) {
-        var sourceFields = getFieldsToCopy(source, dest);
-        var destFields = ReflectionUtil.getFieldsAsCollection(dest, ArrayList::new);
+        return resolveFieldMappings(source, dest).stream()
+                .collect(Collectors.toMap(FieldMapping::sourceField, FieldMapping::destField,
+                        (first, second) -> first, LinkedHashMap::new));
+    }
 
-        if (sourceFields.isEmpty() || destFields.isEmpty()) {
-            return Collections.emptyMap();
+    private static List<FieldMapping> computeFieldMappings(Object source, Object dest) {
+        List<Field> sourceFields = getFieldsToCopy(source, dest);
+        Set<Field> pendingDest = ReflectionUtil.getFieldsAsCollection(dest, LinkedHashSet::new);
+        pendingDest.removeIf(FieldResolver::isStaticFinal);
+
+        List<FieldMapping> mappings = new ArrayList<>();
+        List<Field> pendingSource = matchBySlot(sourceFields, pendingDest, mappings);
+        matchByKeyInHierarchyOrder(pendingSource, pendingDest, mappings, dest.getClass());
+
+        return mappings.stream()
+                .filter(mapping -> !mapping.destField().isAnnotationPresent(ObjectCopyExclude.class))
+                .toList();
+    }
+
+    /**
+     * Phase 1: pairs fields with the same declaring class and logical key.
+     *
+     * @return the source fields left unmatched, in their original order
+     */
+    private static List<Field> matchBySlot(List<Field> sourceFields, Set<Field> pendingDest,
+                                           List<FieldMapping> mappings) {
+        Map<FieldSlot, Field> destBySlot = new HashMap<>();
+        pendingDest.forEach(field -> destBySlot.putIfAbsent(FieldSlot.of(field), field));
+
+        List<Field> unmatched = new ArrayList<>();
+        for (Field sourceField : sourceFields) {
+            Field destField = destBySlot.remove(FieldSlot.of(sourceField));
+            if (destField == null) {
+                unmatched.add(sourceField);
+            } else {
+                mappings.add(new FieldMapping(sourceField, destField));
+                pendingDest.remove(destField);
+            }
         }
-
-        Map<String, Field> sourceFieldMap = buildFieldKeyMap(sourceFields);
-        Map<String, Field> destFieldMap = buildFieldKeyMap(destFields);
-
-        return sourceFieldMap.entrySet().stream()
-                .filter(entry -> destFieldMap.containsKey(entry.getKey()))
-                .collect(Collectors.toMap(
-                        Map.Entry::getValue,
-                        entry -> destFieldMap.get(entry.getKey())
-                ));
+        return unmatched;
     }
 
     /**
-     * Builds a key-to-field map for a given class, using cached data when available.
-     *
-     * @param fields the list of fields to process
-     * @return a map of normalized field names to {@link Field} objects
+     * Phase 2: pairs the remaining fields by logical key, most-derived first on both sides.
      */
-    @SuppressWarnings("java:S6204")
-    static Map<String, Field> buildFieldKeyMap(List<Field> fields) {
-        Map<Class<?>, List<Field>> fieldsByDeclaringClass = fields.stream()
-                .collect(Collectors.groupingBy(Field::getDeclaringClass));
+    private static void matchByKeyInHierarchyOrder(List<Field> pendingSource, Set<Field> pendingDest,
+                                                   List<FieldMapping> mappings, Class<?> destClass) {
+        Map<String, Deque<Field>> destByKey = new HashMap<>();
+        pendingDest.forEach(field ->
+                destByKey.computeIfAbsent(resolveFieldKey(field), k -> new ArrayDeque<>()).add(field));
 
-        return fieldsByDeclaringClass.entrySet().stream()
-                .flatMap(entry -> CopyCache.getOrComputeFieldKeyMap(entry.getKey(), cls -> toFieldKeyMap(cls, entry.getValue()))
-                        .entrySet().stream())
-                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        for (Field sourceField : pendingSource) {
+            Deque<Field> candidates = destByKey.get(resolveFieldKey(sourceField));
+            if (candidates == null) {
+                continue; // destination has no field with this key
+            }
+            if (candidates.isEmpty()) {
+                warnUnassignable(sourceField, destClass);
+            } else {
+                mappings.add(new FieldMapping(sourceField, candidates.poll()));
+            }
+        }
     }
 
-    /**
-     * Builds a normalized key-to-field map for a single declaring class, logging and
-     * keeping the first occurrence whenever two fields resolve to the same key.
-     *
-     * @param declaringClass the class the fields belong to
-     * @param classFields    the fields declared by that class
-     * @return a map of normalized field names to {@link Field} objects
-     */
-    private static Map<String, Field> toFieldKeyMap(Class<?> declaringClass, List<Field> classFields) {
-        return classFields.stream()
-                .collect(Collectors.toMap(
-                        FieldResolver::resolveFieldKey,
-                        Function.identity(),
-                        (first, second) -> logAndKeepFirstDuplicate(declaringClass, first)
-                ));
-    }
-
-    private static Field logAndKeepFirstDuplicate(Class<?> declaringClass, Field first) {
-        log.warn("Duplicate field key '{}' detected in class '{}'. Keeping first occurrence.",
-                first.getName(), declaringClass.getSimpleName());
-        return first;
+    private static void warnUnassignable(Field sourceField, Class<?> destClass) {
+        log.warn("Field '{}.{}' resolves to key '{}', already taken by a more specific field in '{}'. Skipping it.",
+                sourceField.getDeclaringClass().getSimpleName(), sourceField.getName(),
+                resolveFieldKey(sourceField), destClass.getSimpleName());
     }
 
     /**
@@ -117,114 +164,54 @@ public final class FieldResolver {
      */
     public static String resolveFieldKey(Field field) {
         FieldCopyName ann = field.getAnnotation(FieldCopyName.class);
-        String key = (ann != null && StringUtils.hasText(ann.value()))
-                ? ann.value()
-                : field.getName();
-        return key.toLowerCase(Locale.ROOT).trim();
+        String key = (ann != null && StringUtils.hasText(ann.value())) ? ann.value() : field.getName();
+        return normalizeKey(key);
     }
 
     /**
-     * Retrieves all fields that should be copied from the source object,
-     * applying caching and exclusion rules.
+     * Retrieves all source fields that may be copied, applying source-side exclusion rules:
+     * static final fields, {@link ObjectCopyExclude} on the source field, and class-level
+     * {@link ObjectCopyExclusions} / {@link ObjectConstructor#exclude()} (matched by logical key,
+     * so every field resolving to an excluded key is removed).
      *
      * @param <T>    the type of the destination object
      * @param <S>    the type of the source object
      * @param source the source instance to copy fields from
      * @param dest   the destination instance to copy fields to
-     * @return a cached or computed list of copyable fields
+     * @return an immutable list of copyable fields, in hierarchy order (most-derived first)
      */
-    @SuppressWarnings("java:S6204")
     static <T, S> List<Field> getFieldsToCopy(S source, T dest) {
-        ClassPairKey cacheKey = new ClassPairKey(source.getClass(), dest.getClass());
+        Set<String> excludedKeys = new HashSet<>(getClassExclusions(dest.getClass(), true));
+        excludedKeys.addAll(getClassExclusions(source.getClass(), false));
 
-        return CopyCache.getOrComputeFieldsToCopy(cacheKey, key -> {
-            List<Field> sourceFields = new ArrayList<>(ReflectionUtil.getFieldsAsCollection(source));
-            Set<Field> fieldsToRemove = sourceFields.stream()
-                    .filter(PREDICATE_MODIFIERS)
-                    .collect(Collectors.toSet());
-
-            addAnnotationBasedExclusions(fieldsToRemove, sourceFields, dest, true);
-            addAnnotationBasedExclusions(fieldsToRemove, sourceFields, source, false);
-
-            excludeAnnotatedSourceFields(fieldsToRemove, sourceFields);
-            excludeAnnotatedDestinationFields(fieldsToRemove, sourceFields, dest);
-
-            if (!fieldsToRemove.isEmpty()) {
-                sourceFields.removeAll(fieldsToRemove);
-            }
-
-            return List.copyOf(sourceFields);
-        });
-    }
-
-    private static void addAnnotationBasedExclusions(Set<Field> fieldsToRemove,
-                                                      List<Field> sourceFields,
-                                                      Object target,
-                                                      boolean includeObjectConstructor) {
-        Set<String> excludeFields = getClassExclusions(target.getClass(), includeObjectConstructor);
-
-        if (!excludeFields.isEmpty()) {
-            excludeListedFields(fieldsToRemove, sourceFields, excludeFields.toArray(new String[0]));
-        }
+        return ReflectionUtil.getFieldsAsCollection(source, ArrayList::new).stream()
+                .filter(field -> !isStaticFinal(field))
+                .filter(field -> !field.isAnnotationPresent(ObjectCopyExclude.class))
+                .filter(field -> !excludedKeys.contains(resolveFieldKey(field)))
+                .toList();
     }
 
     private static Set<String> getClassExclusions(Class<?> clazz, boolean includeObjectConstructor) {
         Set<String> exclusions = new HashSet<>();
-
-        while (clazz != null && clazz != Object.class) {
-            if (includeObjectConstructor && clazz.isAnnotationPresent(ObjectConstructor.class)) {
-                exclusions.addAll(Arrays.asList(clazz.getAnnotation(ObjectConstructor.class).exclude()));
+        for (Class<?> current = clazz; current != null && current != Object.class; current = current.getSuperclass()) {
+            ObjectConstructor constructor = current.getAnnotation(ObjectConstructor.class);
+            if (includeObjectConstructor && constructor != null) {
+                exclusions.addAll(Arrays.asList(constructor.exclude()));
             }
-            if (clazz.isAnnotationPresent(ObjectCopyExclusions.class)) {
-                exclusions.addAll(Arrays.asList(clazz.getAnnotation(ObjectCopyExclusions.class).value()));
+            ObjectCopyExclusions copyExclusions = current.getAnnotation(ObjectCopyExclusions.class);
+            if (copyExclusions != null) {
+                exclusions.addAll(Arrays.asList(copyExclusions.value()));
             }
-            clazz = clazz.getSuperclass();
         }
-
-        return Set.copyOf(exclusions);
+        return exclusions.stream().map(FieldResolver::normalizeKey).collect(Collectors.toSet());
     }
 
-    private static void excludeAnnotatedSourceFields(Set<Field> fieldsToRemove, List<Field> sourceFields) {
-        sourceFields.stream()
-                .filter(f -> f.isAnnotationPresent(ObjectCopyExclude.class))
-                .forEach(fieldsToRemove::add);
+    private static boolean isStaticFinal(Field field) {
+        int modifiers = field.getModifiers();
+        return Modifier.isStatic(modifiers) && Modifier.isFinal(modifiers);
     }
 
-    private static <T> void excludeAnnotatedDestinationFields(Set<Field> fieldsToRemove,
-                                                               List<Field> sourceFields,
-                                                               T dest) {
-        List<Field> destFields = ReflectionUtil.getFieldsAsCollection(dest, ArrayList::new);
-
-        Map<String, Field> sourceFieldMap = sourceFields.stream()
-                .collect(Collectors.toMap(
-                        FieldResolver::resolveFieldKey,
-                        Function.identity(),
-                        (a, b) -> a
-                ));
-
-        destFields.stream()
-                .filter(f -> f.isAnnotationPresent(ObjectCopyExclude.class))
-                .map(FieldResolver::resolveFieldKey)
-                .map(sourceFieldMap::get)
-                .filter(Objects::nonNull)
-                .forEach(fieldsToRemove::add);
-    }
-
-    private static void excludeListedFields(Set<Field> fieldsToRemove,
-                                             List<Field> sourceFields,
-                                             String[] exclude) {
-        stream(exclude)
-                .forEach(excludeField -> sourceFields.stream()
-                        .filter(sourceField -> resolveFieldKey(sourceField).equalsIgnoreCase(excludeField))
-                        .findAny()
-                        .ifPresentOrElse(fieldsToRemove::add,
-                                () -> log.trace("ObjectCopyExclusions: field '{}' not found in source class. Skipping" +
-                                        " exclusion.", excludeField)
-                        )
-                );
-    }
-
-    private static Predicate<Field> predicateModifiers() {
-        return p -> Modifier.isStatic(p.getModifiers()) && Modifier.isFinal(p.getModifiers());
+    private static String normalizeKey(String key) {
+        return key.toLowerCase(Locale.ROOT).trim();
     }
 }

@@ -36,31 +36,35 @@ public final class CopyOrchestrator {
      * @return the processed value ready to be set in the destination field
      */
     public static <S> Object verifyValue(Field sourceField, Field destField, S source) {
-        Object sourceValue = FieldUtil.getProtectedFieldValue(sourceField, source);
-        sourceValue = HibernateProxyHandler.unproxyValueIfNeeded(sourceValue);
-        Class<?> sourceFieldType = sourceField.getType();
-        Class<?> destFieldType = destField.getType();
+        Object rawValue = FieldUtil.getProtectedFieldValue(sourceField, source);
+        Object sourceValue = HibernateProxyHandler.unproxyValueIfNeeded(rawValue);
 
-        if (sourceFieldType == destFieldType) {
+        if (sourceField.getType() == destField.getType()) {
             return copyValue(sourceField, destField, sourceValue);
         }
+        return convertBetweenTypes(sourceField, destField, sourceValue);
+    }
 
-        if (isWrapperType(sourceFieldType) && destFieldType.isPrimitive() && sourceValue == null) {
-            return defaultValueFor(destFieldType);
+    /**
+     * Handles the copy when source and destination fields declare different types.
+     */
+    private static Object convertBetweenTypes(Field sourceField, Field destField, Object sourceValue) {
+        Class<?> sourceType = sourceField.getType();
+        Class<?> destType = destField.getType();
+
+        if (isWrapperType(sourceType) && destType.isPrimitive() && sourceValue == null) {
+            return defaultValueFor(destType);
         }
-
-        if (isWrapperType(destFieldType) && sourceFieldType.isPrimitive() && Objects.equals(sourceValue, defaultValueFor(sourceFieldType))) {
+        if (isWrapperType(destType) && sourceType.isPrimitive()
+                && Objects.equals(sourceValue, defaultValueFor(sourceType))) {
             return null;
         }
-
-        if (sourceFieldType.isEnum() || destFieldType.isEnum()) {
+        if (sourceType.isEnum() || destType.isEnum()) {
             return EnumConverter.validateEnums(sourceField, destField, sourceValue);
         }
-
-        if (isClassMapCollection(destFieldType) || isClassMapCollection(sourceFieldType)) {
+        if (isClassMapCollection(destType) || isClassMapCollection(sourceType)) {
             return null;
         }
-
         return copyValue(sourceField, destField, sourceValue);
     }
 
@@ -82,14 +86,14 @@ public final class CopyOrchestrator {
         if (isWrapperType(sourceFieldType)) {
             return ObjectCloner.serializingClone(sourceValue, destFieldType);
         }
-        if (isClassMapCollection(sourceField.getType())) {
+        if (isClassMapCollection(sourceFieldType)) {
             return CollectionMapCloner.serializingCloneCollectionMap(sourceValue, destField.getGenericType());
         }
         Class<?> effectiveType = TypeResolver.resolveEffectiveType(sourceValue, destFieldType);
         try {
             return ObjectCloner.serializingCloneObjects(sourceValue, effectiveType);
         } catch (Exception ex) {
-            throw new ApiException(ex.getMessage());
+            throw new ApiException(ex.getMessage(), ex);
         }
     }
 }

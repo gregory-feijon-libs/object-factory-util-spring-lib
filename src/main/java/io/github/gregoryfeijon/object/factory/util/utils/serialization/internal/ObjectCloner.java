@@ -9,6 +9,8 @@ import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 import org.springframework.util.SerializationUtils;
 
+import java.lang.reflect.Type;
+
 /**
  * Handles object cloning via binary and JSON serialization strategies.
  * <p>
@@ -52,11 +54,7 @@ public final class ObjectCloner {
         }
         Class<?> sourceClass = sourceValue.getClass();
 
-        if (ReflectionTypeUtil.isSimpleType(clazz)) {
-            return cloneToBinaryFormat(sourceValue);
-        }
-
-        if (ReflectionTypeUtil.isWrapperType(sourceClass)) {
+        if (ReflectionTypeUtil.isSimpleType(clazz) || ReflectionTypeUtil.isWrapperType(sourceClass)) {
             return cloneToBinaryFormat(sourceValue);
         }
 
@@ -87,6 +85,17 @@ public final class ObjectCloner {
      */
     static Object cloneToJsonFormat(Object sourceValue, Class<?> clazz) {
         return SERIALIZER.deserialize(SERIALIZER.serialize(sourceValue), clazz);
+    }
+
+    /**
+     * Clones an object using JSON serialization, preserving generic type information.
+     *
+     * @param sourceValue the value to clone
+     * @param type        the (possibly parameterized) target type
+     * @return a deep copy of the source value
+     */
+    static Object cloneToJsonFormat(Object sourceValue, Type type) {
+        return SERIALIZER.deserialize(SERIALIZER.serialize(sourceValue), type);
     }
 
     /**
